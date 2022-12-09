@@ -30,7 +30,16 @@ def setup_xbee():
 
 
 def get_voltage():
-    return xbee.atcmd("%V")//100  # power configuration cluster measures in 100mV increments
+    raw = xbee.atcmd("%V")
+    voltage = raw * 1200 // 1024  # scale applied to convert to mV
+    return voltage // 100  # power configuration cluster measures in 100mV increments
+
+
+def get_temperature():
+    tp = xbee.atcmd('TP')
+    if tp > 0x7FFF:
+        tp = tp - 0x10000
+    return tp*100  # HA measures temperature in 100ths of a degree
 
 
 def get_network_address():
@@ -54,7 +63,8 @@ def get_network_address():
 def process_msg():
     # Check if the XBee has any message in the queue.
     received_msg = xbee.receive()
-    while received_msg:
+    # while received_msg:
+    if received_msg is not None:
         # Get the sender's 64-bit address and payload from the received message.
         msg['sender'] = received_msg['sender_eui64']
         msg['payload'] = received_msg['payload']
@@ -81,9 +91,10 @@ def process_msg():
                 msg['payload'] = bytearray(
                     '{:c}\x00{:c}{:c}\x12'  # length of simple descriptor (last byte)
                     '\x55\x04\x01\x00\x00\x00'  # endpoint, profile id, device description identifier, version+reserved  
-                    '\x04'  # input cluster count
+                    '\x05'  # input cluster count
                     '\x00\x00'  # basic
                     '\x01\x00'  # power configuration
+                    '\x02\x00'  # device temperature configuration
                     '\x06\x00'  # on/off
                     '\x0d\x00'  # analogue output
                     '\x00'  # output cluster count
@@ -138,12 +149,45 @@ def process_msg():
                     if a[2] == 0x00:
                         # read attributes response '0x01'
                         battery_voltage = bytearray(struct.pack("B", get_voltage()))
-                        battery_percentage = bytearray(struct.pack("B", int(get_voltage()/0.17)))  # 3.4 volts is 100%
+                        voltage_as_percentage = int(get_voltage()/0.12)  # 2.4 volts is 100%  HA expects a value between 0 and 200 (0.5% resolution)
+                        if voltage_as_percentage > 255:
+                            voltage_as_percentage = 255
+                        battery_percentage = bytearray(struct.pack("B", voltage_as_percentage))
                         msg['payload'] = bytearray(
                             '\x18{:c}\x01'  # header, sequence number, command identifier
                             # attribute ID (2 bytes), status (1 byte), data type (1 byte), value (variable length)
                             '\x20\x00\x00\x20'.format(a[1])) + battery_voltage + bytearray(  # battery voltage (1 byte - uint8)
                             '\x21\x00\x00\x20') + battery_percentage
+                        if a[3] == 0x21:
+                            msg['payload'] = bytearray(
+                                '\x18{:c}\x01'  # header, sequence number, command identifier
+                                # attribute ID (2 bytes), status (1 byte), data type (1 byte), value (variable length)
+                                '\x21\x00\x00\x20'.format(a[1])) + battery_percentage
+                        send()
+                    # configure reporting '0x06'
+                    elif a[2] == 0x06:
+                        # configure reporting response '0x07'
+                        # just responds with success, even though I haven't set up any reporting mechanism!
+                        msg['payload'] = bytearray(
+                            '\x18{:c}\x07'  # header, sequence number, command identifier
+                            '\x00'.format(a[1]))  # only sending a single ZCL payload byte (0x00) to indicate that all attributes were successfully configured
+                        send()
+                    else:
+                        print('general command : %04x not supported' % a[2])
+
+            # 'temperature configuration' cluster
+            elif msg['cluster'] == 0x0002:
+                # global cluster commands
+                if a[0] & 0b11 == 0b00:
+                    # read attributes '0x00'
+                    if a[2] == 0x00:
+                        # read attributes response '0x01'
+                        device_temperature = bytearray(struct.pack("h", get_temperature()))
+                        msg['payload'] = bytearray(
+                            '\x18{:c}\x01'  # header, sequence number, command identifier
+                            # attribute ID (2 bytes), status (1 byte), data type (1 byte), value (variable length)
+                            '\x00\x00\x00\x29'.format(a[1])) + device_temperature
+                        print(device_temperature)
                         send()
                     # configure reporting '0x06'
                     elif a[2] == 0x06:
@@ -226,7 +270,9 @@ def process_msg():
             else:
                 print('cluster: %04x not supported' % msg['cluster'])
             print('sequence number: %02x\n' % a[1])
-        received_msg = xbee.receive()
+        # received_msg = xbee.receive()
+    else:
+        return None
 
 
 def report_attributes(cluster):
@@ -243,14 +289,14 @@ def report_attributes(cluster):
     elif cluster == 0x000d:
         global rev_counter
         rev_counter += 0.1
-        present_value = bytearray(struct.pack("f", rev_counter))  # valve.revs))
-        print(["0x%02x" % b for b in present_value])
+        present_value = bytearray(struct.pack("f", valve.revs))  # rev_counter))
+        # print(["0x%02x" % b for b in present_value])
         msg['cluster'] = 0x000d
         msg['source_ep'] = 0x01  # dest and source are swapped in the send function, should probably change this
         msg['dest_ep'] = 0x55
         msg['profile'] = 0x0104
         msg['payload'] = bytearray(
-            '\x18\x01\x0a'  # replaced the sequence number with \x01
+            '\x18\x02\x0a'  # replaced the sequence number with \x02
             # attribute ID (2 bytes), data type (1 byte), value (variable length)
             # '\x1c\x00\x42\x04revs'  # Description (variable bytes)
             # '\x51\x00\x10\x00'  # OutOfService (1 byte)
@@ -258,4 +304,32 @@ def report_attributes(cluster):
             '\x39'  # data type
             # '\x6f\x00\x18\x00'  # StatusFlags (1 byte)
             ) + present_value  # PresentValue (4 bytes)
+        send()
+
+    elif cluster == 0x0002:
+        device_temperature = bytearray(struct.pack("h", get_temperature()))
+        # print(["0x%02x" % b for b in device_temperature])
+        # print(device_temperature)
+        msg['payload'] = bytearray(
+            '\x18\x03\x0a'
+            '\x00\x00'
+            '\x29'
+            ) + device_temperature
+        msg['cluster'] = 0x0002
+        msg['source_ep'] = 0x01  # dest and source are swapped in the send function, should probably change this
+        msg['dest_ep'] = 0x55
+        msg['profile'] = 0x0104
+        send()
+
+    elif cluster == 0x0001:
+        voltage_as_percentage = int(
+            get_voltage() / 0.12)  # 2.4 volts is 100%  HA expects a value between 0 and 200 (0.5% resolution)
+        if voltage_as_percentage > 255:  # can only measure up to 127% as is a single byte
+            voltage_as_percentage = 255
+        battery_percentage = bytearray(struct.pack("B", voltage_as_percentage))
+        msg['payload'] = bytearray(
+            '\x18\x04\x0a'  # header, sequence number, command identifier
+            '\x21\x00'
+            '\x20'
+            ) + battery_percentage
         send()
