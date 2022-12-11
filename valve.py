@@ -3,7 +3,7 @@ import time
 import ZHA_comms
 
 
-output_pin = Pin('D4', Pin.OUT, Pin.PULL_UP)
+output_pin = Pin('D1', Pin.OUT)  # , Pin.PULL_UP)
 apin = ADC('D3')  # create an analog pin on D3
 motorPin = PWM(Pin('P1'))
 output_pin.off()
@@ -16,9 +16,18 @@ max_revs = 0
 motor_direction = 0
 
 
+def demand():
+    if ZHA_comms.on_off_attributes['OnOff']:  # on
+        actuate_valve('open')
+    else:  # off
+        actuate_valve('close')
+
+
 def open_valve():
-    output_pin.on()
-    motorPin.duty(0)  # 880 is the slowest before the motor won't turn
+    # output_pin.on()
+    # motorPin.duty(0)  # 880 is the slowest before the motor won't turn
+    Pin('D1', Pin.IN, Pin.PULL_UP)
+    Pin('D11', Pin.IN, Pin.PULL_DOWN)
     global motor_direction
     motor_direction = 1
     # print('opening')
@@ -26,8 +35,10 @@ def open_valve():
 
 
 def close_valve():
-    output_pin.off()
-    motorPin.duty(1023)
+    # output_pin.off()
+    # motorPin.duty(1023)
+    Pin('D1', Pin.IN, Pin.PULL_DOWN)
+    Pin('D11', Pin.IN, Pin.PULL_UP)
     global motor_direction
     motor_direction = -1
     # print('closing')
@@ -35,8 +46,10 @@ def close_valve():
 
 
 def stop_valve():
-    output_pin.on()
-    motorPin.duty(1023)
+    # output_pin.on()
+    # motorPin.duty(1023)
+    Pin('D1', Pin.IN, Pin.PULL_UP)
+    Pin('D11', Pin.IN, Pin.PULL_UP)
     global motor_direction
     motor_direction = 0
     # print('stopped')
@@ -132,79 +145,97 @@ def motor_moving():
     else:
         return 'stopped'
 
-"""
-while True:
-    # val = apin.read()  # read an analog value
-    # print("- Analogue input value:", val)  # display analog value
-    
-    # 1
-    output_pin.off()
-    motorPin.duty(1023)
-    time.sleep_ms(2000)
-    
-    # 2
-    output_pin.off()
-    motorPin.duty(0)
+
+def test2():
+    Pin('D1', Pin.IN, Pin.PULL_UP)
+    Pin('D11', Pin.IN, Pin.PULL_UP)
     time.sleep_ms(2000)
 
-    # 3
-    output_pin.off()
-    motorPin.duty(1023)
+    Pin('D1', Pin.IN, Pin.PULL_DOWN)
+    Pin('D11', Pin.IN, Pin.PULL_UP)
     time.sleep_ms(2000)
 
-    # 4
-    output_pin.on()
-    motorPin.duty(1023)
+    ZHA_comms.xbee.XBee().sleep_now(3000, pin_wake=True)
+
+    Pin('D1', Pin.IN, Pin.PULL_UP)
+    Pin('D11', Pin.IN, Pin.PULL_UP)
     time.sleep_ms(2000)
 
-    # 5
-    output_pin.off()
-    motorPin.duty(1023)
-    time.sleep_ms(2000)
+    ZHA_comms.xbee.XBee().sleep_now(2000, pin_wake=True)
 
-    # 6
-    output_pin.on()
-    motorPin.duty(0)
-    time.sleep_ms(2000)
 
-    # 7
-    output_pin.off()
-    motorPin.duty(0)
-    time.sleep_ms(2000)
+def test():
+    while True:
+        # val = apin.read()  # read an analog value
+        # print("- Analogue input value:", val)  # display analog value
 
-    # 8
-    output_pin.on()
-    motorPin.duty(0)
-    time.sleep_ms(2000)
-    
-    # 9
-    output_pin.on()
-    motorPin.duty(1023)
-    time.sleep_ms(2000)
-"""
-"""
-    # 10
-    # Reverse
-    output_pin.on()
-    motorPin.duty(0)
-    time.sleep_ms(6000)
-    
-    output_pin.on()
-    motorPin.duty(1023)
-    time.sleep_ms(4000)
+        # 1
+        output_pin.off()
+        motorPin.duty(1023)
+        time.sleep_ms(2000)
 
-    # Soft stop
-    output_pin.off()
-    motorPin.duty(0)
-    time.sleep_ms(2000)
+        # 2
+        output_pin.off()
+        motorPin.duty(0)
+        time.sleep_ms(2000)
 
-    # Forwards
-    output_pin.off()
-    motorPin.duty(1023)
-    time.sleep_ms(2000)
+        # 3
+        output_pin.off()
+        motorPin.duty(1023)
+        time.sleep_ms(2000)
 
-    # Soft stop
-    output_pin.off()
-    motorPin.duty(0)
-    time.sleep_ms(3000)
-"""
+        # 4
+        output_pin.on()
+        motorPin.duty(1023)
+        time.sleep_ms(2000)
+
+        # 5
+        output_pin.off()
+        motorPin.duty(1023)
+        time.sleep_ms(2000)
+
+        # 6
+        output_pin.on()
+        motorPin.duty(0)
+        time.sleep_ms(2000)
+
+        # 7
+        output_pin.off()
+        motorPin.duty(0)
+        time.sleep_ms(2000)
+
+        # 8
+        output_pin.on()
+        motorPin.duty(0)
+        time.sleep_ms(2000)
+
+        # 9
+        output_pin.on()
+        motorPin.duty(1023)
+        time.sleep_ms(2000)
+
+        # 10
+        # Reverse
+        output_pin.on()
+        motorPin.duty(0)
+        time.sleep_ms(6000)
+
+        output_pin.on()
+        motorPin.duty(1023)
+        time.sleep_ms(4000)
+
+        # Soft stop
+        output_pin.off()
+        motorPin.duty(0)
+        time.sleep_ms(2000)
+
+        # Forwards
+        output_pin.off()
+        motorPin.duty(1023)
+        time.sleep_ms(2000)
+
+        # Soft stop
+        output_pin.off()
+        motorPin.duty(0)
+        time.sleep_ms(3000)
+

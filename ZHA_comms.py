@@ -91,12 +91,13 @@ def process_msg():
                 msg['payload'] = bytearray(
                     '{:c}\x00{:c}{:c}\x12'  # length of simple descriptor (last byte)
                     '\x55\x04\x01\x00\x00\x00'  # endpoint, profile id, device description identifier, version+reserved  
-                    '\x05'  # input cluster count
+                    '\x06'  # input cluster count
                     '\x00\x00'  # basic
                     '\x01\x00'  # power configuration
                     '\x02\x00'  # device temperature configuration
                     '\x06\x00'  # on/off
                     '\x0d\x00'  # analogue output
+                    '\x10\x00'  # binary output
                     '\x00'  # output cluster count
                     .format(a[0], msg['address_low'], msg['address_high']))
                 msg['cluster'] = 0x8004
@@ -266,6 +267,34 @@ def process_msg():
                         send()
                     else:
                         print('general command : %04x not supported' % a[2])
+
+            # 'binary output' cluster
+            elif msg['cluster'] == 0x0010:
+                # global cluster commands
+                if a[0] & 0b11 == 0b00:
+                    # read attributes '0x00'
+                    if a[2] == 0x00:
+                        # read attributes response '0x01'
+                        present_value = 0b00
+                        msg['payload'] = bytearray(
+                            '\x18{:c}\x01'  # header, sequence number, command identifier
+                            # attribute ID (2 bytes), status (1 byte), data type (1 byte), value (variable length)
+                            '\x1c\x00\x00\x42\x05awake'  # Description (variable bytes)
+                            '\x51\x00\x00\x10\x00'  # OutOfService (1 byte)
+                            '\x55\x00\x00\x10'.format(a[1])) + present_value + bytearray(  # PresentValue (1 byte)
+                            '\x6f\x00\x00\x18\x00')  # StatusFlags (1 byte)
+                        send()
+                    # configure reporting '0x06'
+                    elif a[2] == 0x06:
+                        # configure reporting response '0x07'
+                        # just responds with success, even though I haven't set up any reporting mechanism!
+                        msg['payload'] = bytearray(
+                            '\x18{:c}\x07'  # header, sequence number, command identifier
+                            '\x00'.format(a[1]))  # only sending a single ZCL payload byte (0x00) to indicate that all attributes were successfully configured
+                        send()
+                    else:
+                        print('general command : %04x not supported' % a[2])
+
 
             else:
                 print('cluster: %04x not supported' % msg['cluster'])
