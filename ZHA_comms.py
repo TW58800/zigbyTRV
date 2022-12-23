@@ -9,7 +9,7 @@ import valve
 
 # on/off cluster attributes
 on_off_attributes = {
-    'OnOff': False
+    'OnOff': True
 }
 
 msg = {'sender': "", 'payload': "", 'cluster': 0, 'source_ep': 0, 'dest_ep': 0, 'profile': 0, 'address_low': 0,
@@ -17,12 +17,17 @@ msg = {'sender': "", 'payload': "", 'cluster': 0, 'source_ep': 0, 'dest_ep': 0, 
 
 rev_counter = 2.0  # temporary, while checking attribute reporting
 
+awake_flag = 0
+
 
 def send():
-    xbee.transmit(xbee.ADDR_COORDINATOR, msg['payload'], source_ep=msg['dest_ep'], dest_ep=msg['source_ep'],
+    try:
+        xbee.transmit(xbee.ADDR_COORDINATOR, msg['payload'], source_ep=msg['dest_ep'], dest_ep=msg['source_ep'],
                   cluster=msg['cluster'],
                   profile=msg['profile'], bcast_radius=0, tx_options=0)
-    print('Transmit: %s\n' % msg['payload'])
+        print('Transmit: %s\n' % msg['payload'])
+    except OSError:
+        print('OSError - could not send')
 
 
 def setup_xbee():
@@ -89,7 +94,7 @@ def process_msg():
             # simple descriptor request
             elif msg['cluster'] == 0x0004:
                 msg['payload'] = bytearray(
-                    '{:c}\x00{:c}{:c}\x12'  # length of simple descriptor (last byte)
+                    '{:c}\x00{:c}{:c}\x16'  # length of simple descriptor (last byte)
                     '\x55\x04\x01\x00\x00\x00'  # endpoint, profile id, device description identifier, version+reserved  
                     '\x06'  # input cluster count
                     '\x00\x00'  # basic
@@ -97,8 +102,9 @@ def process_msg():
                     '\x02\x00'  # device temperature configuration
                     '\x06\x00'  # on/off
                     '\x0d\x00'  # analogue output
-                    '\x10\x00'  # binary output
-                    '\x00'  # output cluster count
+                    '\x0f\x00'  # binary input
+                    '\x01'  # output cluster count
+                    '\x10\x00'  # binary output (not recognised by Home Assistant)
                     .format(a[0], msg['address_low'], msg['address_high']))
                 msg['cluster'] = 0x8004
                 send()
@@ -150,9 +156,10 @@ def process_msg():
                     if a[2] == 0x00:
                         # read attributes response '0x01'
                         battery_voltage = bytearray(struct.pack("B", get_voltage()))
-                        voltage_as_percentage = int(get_voltage()/0.12)  # 2.4 volts is 100%  HA expects a value between 0 and 200 (0.5% resolution)
+                        voltage_as_percentage = int((get_voltage()-18)*33)  # 2.4 volts is 100%  HA expects a value between 0 and 200 (0.5% resolution)
                         if voltage_as_percentage > 255:
                             voltage_as_percentage = 255
+                        print('voltage %i%%: ' % voltage_as_percentage)
                         battery_percentage = bytearray(struct.pack("B", voltage_as_percentage))
                         msg['payload'] = bytearray(
                             '\x18{:c}\x01'  # header, sequence number, command identifier
@@ -268,14 +275,14 @@ def process_msg():
                     else:
                         print('general command : %04x not supported' % a[2])
 
-            # 'binary output' cluster
-            elif msg['cluster'] == 0x0010:
+            # 'binary input' cluster
+            elif msg['cluster'] == 0x000f:
                 # global cluster commands
                 if a[0] & 0b11 == 0b00:
                     # read attributes '0x00'
                     if a[2] == 0x00:
                         # read attributes response '0x01'
-                        present_value = 0b00
+                        present_value = b'\x00'
                         msg['payload'] = bytearray(
                             '\x18{:c}\x01'  # header, sequence number, command identifier
                             # attribute ID (2 bytes), status (1 byte), data type (1 byte), value (variable length)
@@ -294,7 +301,6 @@ def process_msg():
                         send()
                     else:
                         print('general command : %04x not supported' % a[2])
-
 
             else:
                 print('cluster: %04x not supported' % msg['cluster'])
@@ -339,6 +345,7 @@ def report_attributes(cluster):
         device_temperature = bytearray(struct.pack("h", get_temperature()))
         # print(["0x%02x" % b for b in device_temperature])
         # print(device_temperature)
+        # print(get_temperature())
         msg['payload'] = bytearray(
             '\x18\x03\x0a'
             '\x00\x00'
@@ -352,13 +359,32 @@ def report_attributes(cluster):
 
     elif cluster == 0x0001:
         voltage_as_percentage = int(
-            get_voltage() / 0.12)  # 2.4 volts is 100%  HA expects a value between 0 and 200 (0.5% resolution)
+            (get_voltage()-18)*33)  # 2.4 volts is 99% 1.8V is 0%  HA expects a value between 0 and 200 (0.5% resolution)
         if voltage_as_percentage > 255:  # can only measure up to 127% as is a single byte
             voltage_as_percentage = 255
+        # print('voltage %i%%: ' % voltage_as_percentage)
         battery_percentage = bytearray(struct.pack("B", voltage_as_percentage))
         msg['payload'] = bytearray(
             '\x18\x04\x0a'  # header, sequence number, command identifier
             '\x21\x00'
             '\x20'
             ) + battery_percentage
+        msg['cluster'] = 0x0001
+        msg['source_ep'] = 0x01  # dest and source are swapped in the send function, should probably change this
+        msg['dest_ep'] = 0x55
+        msg['profile'] = 0x0104
+        send()
+
+    elif cluster == 0x000f:
+        global awake_flag
+        binary_sensor = bytearray(struct.pack("B", awake_flag))
+        msg['payload'] = bytearray(
+            '\x18\x05\x0a'  # header, sequence number, command identifier
+            '\x55\x00'
+            '\x10'
+            ) + binary_sensor
+        msg['cluster'] = 0x000f
+        msg['source_ep'] = 0x01  # dest and source are swapped in the send function, should probably change this
+        msg['dest_ep'] = 0x55
+        msg['profile'] = 0x0104
         send()

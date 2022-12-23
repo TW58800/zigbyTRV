@@ -100,7 +100,7 @@ def home_valve():
     stop_valve()
     revs = 0
     # goes to the open position
-    time.sleep_ms(1000)
+    time.sleep_ms(500)
     print('moving to opposite end of travel')
     # time.sleep_ms(500)
     open_valve()
