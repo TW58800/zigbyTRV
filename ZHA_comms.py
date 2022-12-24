@@ -35,9 +35,17 @@ def setup_xbee():
 
 
 def get_voltage():
-    raw = xbee.atcmd("%V")
-    voltage = raw * 1200 // 1024  # scale applied to convert to mV
+    voltage = xbee.atcmd("%V")
     return voltage // 100  # power configuration cluster measures in 100mV increments
+
+
+def get_battery_charge():
+    voltage_as_percentage = int(
+        (get_voltage() - 18) * 21)  # 2.4 volts is 90%  HA expects a value between 0 and 200 (0.5% resolution)
+    if voltage_as_percentage > 255:
+        voltage_as_percentage = 255
+    # print('voltage %i%%: ' % voltage_as_percentage)
+    return bytearray(struct.pack("B", voltage_as_percentage))
 
 
 def get_temperature():
@@ -63,6 +71,7 @@ def get_network_address():
     print('Address High: %02x' % msg['address_high'])
     print('Address Low: %02x' % msg['address_low'])
     print("\nWaiting for data...\n")
+    time.sleep_ms(10000)
 
 
 def process_msg():
@@ -156,21 +165,16 @@ def process_msg():
                     if a[2] == 0x00:
                         # read attributes response '0x01'
                         battery_voltage = bytearray(struct.pack("B", get_voltage()))
-                        voltage_as_percentage = int((get_voltage()-18)*33)  # 2.4 volts is 100%  HA expects a value between 0 and 200 (0.5% resolution)
-                        if voltage_as_percentage > 255:
-                            voltage_as_percentage = 255
-                        print('voltage %i%%: ' % voltage_as_percentage)
-                        battery_percentage = bytearray(struct.pack("B", voltage_as_percentage))
                         msg['payload'] = bytearray(
                             '\x18{:c}\x01'  # header, sequence number, command identifier
                             # attribute ID (2 bytes), status (1 byte), data type (1 byte), value (variable length)
                             '\x20\x00\x00\x20'.format(a[1])) + battery_voltage + bytearray(  # battery voltage (1 byte - uint8)
-                            '\x21\x00\x00\x20') + battery_percentage
+                            '\x21\x00\x00\x20') + get_battery_charge()
                         if a[3] == 0x21:
                             msg['payload'] = bytearray(
                                 '\x18{:c}\x01'  # header, sequence number, command identifier
                                 # attribute ID (2 bytes), status (1 byte), data type (1 byte), value (variable length)
-                                '\x21\x00\x00\x20'.format(a[1])) + battery_percentage
+                                '\x21\x00\x00\x20'.format(a[1])) + get_battery_charge()
                         send()
                     # configure reporting '0x06'
                     elif a[2] == 0x06:
@@ -358,17 +362,11 @@ def report_attributes(cluster):
         send()
 
     elif cluster == 0x0001:
-        voltage_as_percentage = int(
-            (get_voltage()-18)*33)  # 2.4 volts is 99% 1.8V is 0%  HA expects a value between 0 and 200 (0.5% resolution)
-        if voltage_as_percentage > 255:  # can only measure up to 127% as is a single byte
-            voltage_as_percentage = 255
-        # print('voltage %i%%: ' % voltage_as_percentage)
-        battery_percentage = bytearray(struct.pack("B", voltage_as_percentage))
         msg['payload'] = bytearray(
             '\x18\x04\x0a'  # header, sequence number, command identifier
             '\x21\x00'
             '\x20'
-            ) + battery_percentage
+            ) + get_battery_charge()
         msg['cluster'] = 0x0001
         msg['source_ep'] = 0x01  # dest and source are swapped in the send function, should probably change this
         msg['dest_ep'] = 0x55

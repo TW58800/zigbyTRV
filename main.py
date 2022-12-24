@@ -11,7 +11,7 @@ ZHA_comms.setup_xbee()
 valve.stop_valve()
 ZHA_comms.get_network_address()
 while ZHA_comms.process_msg() is not None:
-    ...
+    time.sleep_ms(300)  # to avoid starting homing before HA configuration has finished
 valve.home_valve()
 counter = time.ticks_ms()
 
