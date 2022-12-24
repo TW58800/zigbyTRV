@@ -40,8 +40,9 @@ def get_voltage():
 
 
 def get_battery_charge():
+    voltage = xbee.atcmd("%V")
     voltage_as_percentage = int(
-        (get_voltage() - 18) * 21)  # 2.4 volts is 90%  HA expects a value between 0 and 200 (0.5% resolution)
+        (voltage - 1800) * 0.21)  # 2.4 volts is 63%  HA expects a value between 0 and 200 (0.5% resolution)
     if voltage_as_percentage > 255:
         voltage_as_percentage = 255
     # print('voltage %i%%: ' % voltage_as_percentage)
