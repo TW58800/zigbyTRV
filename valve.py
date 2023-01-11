@@ -8,6 +8,7 @@ apin = ADC('D3')  # create an analog pin on D3
 motorPin = PWM(Pin('P1'))
 output_pin.off()
 motorPin.duty(0)
+voltage_monitor = ADC('D2')
 
 last_ticks = 0  # time.ticks_ms()
 above_threshold = True

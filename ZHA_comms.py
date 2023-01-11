@@ -36,15 +36,19 @@ def setup_xbee():
 
 def get_voltage():
     voltage = xbee.atcmd("%V")
-    return voltage // 100  # power configuration cluster measures in 100mV increments
+    battery_voltage = int(valve.voltage_monitor.read() * (voltage / 1024))
+    return battery_voltage // 100  # power configuration cluster measures in 100mV increments
 
 
 def get_battery_charge():
     voltage = xbee.atcmd("%V")
+    battery_voltage = int(valve.voltage_monitor.read() * (voltage / 1024))
     voltage_as_percentage = int(
-        (voltage - 1800) * 0.21)  # 2.4 volts is 63%  HA expects a value between 0 and 200 (0.5% resolution)
+        (battery_voltage - 2000) * 0.3)  # 2.4 volts is 63%  HA expects a value between 0 and 200 (0.5% resolution)
     if voltage_as_percentage > 255:
         voltage_as_percentage = 255
+    if voltage_as_percentage < 0:
+        voltage_as_percentage = 0
     # print('voltage %i%%: ' % voltage_as_percentage)
     return bytearray(struct.pack("B", voltage_as_percentage))
 

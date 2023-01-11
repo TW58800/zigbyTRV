@@ -35,10 +35,10 @@ while True:
         ZHA_comms.report_attributes(0x0006)
         ZHA_comms.report_attributes(0x0002)
         ZHA_comms.report_attributes(0x0001)
-        print("sleeping for 60 seconds\n")
-        ZHA_comms.awake_flag = 0
-        ZHA_comms.report_attributes(0x000f)
-        ZHA_comms.xbee.XBee().sleep_now(60000, pin_wake=True)
+        # print("sleeping for 60 seconds\n")
+        # ZHA_comms.awake_flag = 0
+        # ZHA_comms.report_attributes(0x000f)
+        # ZHA_comms.xbee.XBee().sleep_now(60000, pin_wake=True)
         ZHA_comms.awake_flag = 1
         ZHA_comms.report_attributes(0x000f)
 
