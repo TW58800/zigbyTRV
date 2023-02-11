@@ -1,38 +1,9 @@
 # 27/11/2022 playing around with the header frames to see if the direction or default response bits make a difference in HA
 
-# from typing import Any
+import struct
 import xbee
 import time
-from types import struct
 import valve
-import zcl
-from zcl.clusters import general
-
-basic = general.Basic(55, True)
-basic.update_attribute(0x0001, 2)
-basic.update_attribute(0x0002, 1)
-basic.update_attribute(0x0003, 1)
-basic.update_attribute(0x0004, "TW-Design")
-basic.update_attribute(0x0005, "MW-Valve")
-basic.update_attribute(0x0006, "13/01/2023")
-basic.update_attribute(0x0007, general.Basic.PowerSource.Battery)
-basic.update_attribute(0x0008, general.Basic.GenericDeviceClass.Lighting)
-basic.update_attribute(0x0009, general.Basic.GenericLightingDeviceType.Unspecified)
-basic.update_attribute(0x000A, 0b01001111)
-basic.update_attribute(0x000B, "www.twdesign.com")
-basic.update_attribute(0x000C, "version 1.0")
-basic.update_attribute(0x000D, 2649)
-basic.update_attribute(0x000E, "best valve")
-basic.update_attribute(0x0010, "The Nest")
-basic.update_attribute(0x0011, general.Basic.PhysicalEnvironment.Study)
-basic.update_attribute(0x0012, True)
-basic.update_attribute(0x0013, 0)
-basic.update_attribute(0x0014, 0)
-basic.update_attribute(0x4000, "build 1")
-basic.update_attribute(0xFFFD, 1)
-basic.update_attribute(0xFFFE, general.AttributeReportingStatus.Pending)
-
-in_clusters: dict = {basic.cluster_id: basic}
 
 
 # on/off cluster attributes
@@ -125,9 +96,6 @@ def process_msg():
                   msg['source_ep'], msg['dest_ep'], msg['profile']))
         a = list(msg['payload'])
 
-        hdr, response = zcl.Cluster.deserialize(a)
-
-        Struct.
 
         # ZDO endpoint
         if msg['dest_ep'] == 0x0000:
