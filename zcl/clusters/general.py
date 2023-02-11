@@ -1,5 +1,6 @@
 import types as t
-from foundation import ZCLAttributeDef, ZCLCommandDef
+from zcl import Cluster
+from zcl.foundation import ZCLAttributeDef, ZCLCommandDef
 
 
 class AttributeReportingStatus(t.enum8):
@@ -15,10 +16,7 @@ ZCL_REPORTING_STATUS_ATTR = ZCLAttributeDef(
 )
 
 
-# class Basic(Cluster):
-
-
-class Basic:
+class Basic(Cluster):
     """Attributes for determining basic information about a
     device, setting user device information such as location,
     and enabling a device.

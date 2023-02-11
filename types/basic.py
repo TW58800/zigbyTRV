@@ -1,7 +1,10 @@
 from __future__ import annotations
 import enum
+import sys
+import typing
 
 # CALLABLE_T = typing.TypeVar("CALLABLE_T", bound=typing.Callable)
+T = typing.TypeVar("T")
 
 
 class Bits(list):
@@ -173,6 +176,46 @@ class uint8_t(uint_t, bits=8):
     pass
 
 
+class uint16_t(uint_t, bits=16):
+    pass
+
+
+# def bitmap_factory(int_type: CALLABLE_T) -> CALLABLE_T:
+def bitmap_factory(int_type):
+    """
+    Mixins are broken by Python 3.8.6 so we must dynamically create the enum with the
+    appropriate methods but with only one non-Enum parent class.
+    """
+
+    if sys.version_info >= (3, 11):
+
+        class _NewEnum(int_type, enum.ReprEnum, enum.Flag, boundary=enum.KEEP):
+            pass
+
+    else:
+
+        class _NewEnum(int_type, enum.Flag):
+            # Rebind classmethods to our own class
+            _missing_ = classmethod(enum.IntFlag._missing_.__func__)
+            _create_pseudo_member_ = classmethod(
+                enum.IntFlag._create_pseudo_member_.__func__
+            )
+
+            __or__ = enum.IntFlag.__or__
+            __and__ = enum.IntFlag.__and__
+            __xor__ = enum.IntFlag.__xor__
+            __ror__ = enum.IntFlag.__ror__
+            __rand__ = enum.IntFlag.__rand__
+            __rxor__ = enum.IntFlag.__rxor__
+            __invert__ = enum.IntFlag.__invert__
+
+    return _NewEnum
+
+
+class bitmap8(bitmap_factory(uint8_t)):
+    pass
+
+
 # def enum_factory(int_type: CALLABLE_T, undefined: str = "undefined") -> CALLABLE_T:
 def enum_factory(int_type, undefined: str = "undefined"):
     """Enum factory."""
@@ -205,3 +248,45 @@ def enum_factory(int_type, undefined: str = "undefined"):
 
 class enum8(enum_factory(uint8_t)):  # noqa: N801
     pass
+
+
+class CharacterString(str):
+    _prefix_length = 1
+
+    def serialize(self) -> bytes:
+        if len(self) >= pow(256, self._prefix_length) - 1:
+            raise ValueError("String is too long")
+        return len(self).to_bytes(
+            self._prefix_length, "little", signed=False
+        ) + self.encode("utf8")
+
+    @classmethod
+    def deserialize(cls: type[T], data: bytes) -> tuple[T, bytes]:
+        if len(data) < cls._prefix_length:
+            raise ValueError("Data is too short")
+
+        length = int.from_bytes(data[: cls._prefix_length], "little")
+
+        if len(data) < cls._prefix_length + length:
+            raise ValueError("Data is too short")
+
+        raw = data[cls._prefix_length : cls._prefix_length + length]
+        text = raw.split(b"\x00")[0].decode("utf8", errors="replace")
+
+        # FIXME: figure out how to get this working: `T` is not behaving as expected in
+        # the classmethod when it is not bound.
+        r = cls(text)  # type:ignore[call-arg]
+        r.raw = raw
+        return r, data[cls._prefix_length + length :]
+
+
+def LimitedCharString(max_len):  # noqa: N802
+    class LimitedCharString(CharacterString):
+        _max_len = max_len
+
+        def serialize(self) -> bytes:
+            if len(self) > self._max_len:
+                raise ValueError(f"String is too long (>{self._max_len})")
+            return super().serialize()
+
+    return LimitedCharString
