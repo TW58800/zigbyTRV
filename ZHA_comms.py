@@ -1,9 +1,7 @@
-# 27/11/2022 playing around with the header frames to see if the direction or default response bits make a difference in HA
-
+from machine import ADC
 import struct
 import xbee
 import time
-import valve
 
 
 # on/off cluster attributes
@@ -14,16 +12,15 @@ on_off_attributes = {
 msg = {'sender': "", 'payload': "", 'cluster': 0, 'source_ep': 0, 'dest_ep': 0, 'profile': 0, 'address_low': 0,
        'address_high': 0}
 
-rev_counter = 2.0  # temporary, while checking attribute reporting
-
+rev_counter = 0
+voltage_monitor = ADC('D2')
 awake_flag = 0
 
 
 def send():
     try:
         xbee.transmit(xbee.ADDR_COORDINATOR, msg['payload'], source_ep=msg['dest_ep'], dest_ep=msg['source_ep'],
-                  cluster=msg['cluster'],
-                  profile=msg['profile'], bcast_radius=0, tx_options=0)
+                      cluster=msg['cluster'], profile=msg['profile'], bcast_radius=0, tx_options=0)
         print('Transmit: %s\n' % msg['payload'])
     except OSError:
         print('OSError - could not send')
@@ -31,25 +28,45 @@ def send():
 
 def setup_xbee():
     xbee.atcmd("SM", 6)
+    xbee.atcmd("AV", 1)  # analogue voltage reference 2.5V
+    # xbee.atcmd("AV", 2)  # analogue voltage reference VDD
 
 
-def get_voltage():
-    voltage = xbee.atcmd("%V")
-    battery_voltage = int(valve.voltage_monitor.read() * (voltage / 1024))
-    return battery_voltage // 100  # power configuration cluster measures in 100mV increments
+def reference_voltage():
+    av = xbee.atcmd("AV")
+    if av == 0:
+        return 1250
+    elif av == 1:
+        return 2500
+    else:
+        return xbee.atcmd("%V")
 
 
-def get_battery_charge():
-    voltage = xbee.atcmd("%V")
-    battery_voltage = int(valve.voltage_monitor.read() * (voltage / 1024))
+def battery_voltage_mV():
+    # print(valve.voltage_monitor.read())
+    if not xbee.atcmd("AV") == 2:
+        batt_voltage = int(voltage_monitor.read() * (reference_voltage() / 4096))
+        print('battery voltage %imV: ' % batt_voltage)
+        return batt_voltage
+    else:
+        batt_voltage = xbee.atcmd("%V")
+        # print('battery voltage %i: ' % batt_voltage)
+        return batt_voltage
+
+
+def battery_voltage():
+    return battery_voltage_mV() // 100  # power configuration cluster measures in 100mV increments
+
+
+def battery_percentage_remaining():
     voltage_as_percentage = int(
-        (battery_voltage - 2000) * 0.3)  # 2.4 volts is 63%  HA expects a value between 0 and 200 (0.5% resolution)
+        (battery_voltage_mV() - 2000) * 0.3)  # 2.4 volts is 63%  HA expects a value between 0 and 200 (0.5% resolution)
     if voltage_as_percentage > 255:
         voltage_as_percentage = 255
     if voltage_as_percentage < 0:
         voltage_as_percentage = 0
-    # print('voltage %i%%: ' % voltage_as_percentage)
-    return bytearray(struct.pack("B", voltage_as_percentage))
+    print('voltage: {:04.1f}%'.format(voltage_as_percentage/2))
+    return voltage_as_percentage
 
 
 def get_temperature():
@@ -95,7 +112,6 @@ def process_msg():
                   ''.join('{:02x}'.format(x).upper() for x in msg['sender']), msg['payload'], msg['cluster'],
                   msg['source_ep'], msg['dest_ep'], msg['profile']))
         a = list(msg['payload'])
-
 
         # ZDO endpoint
         if msg['dest_ep'] == 0x0000:
@@ -169,17 +185,18 @@ def process_msg():
                     # read attributes '0x00'
                     if a[2] == 0x00:
                         # read attributes response '0x01'
-                        battery_voltage = bytearray(struct.pack("B", get_voltage()))
+                        batt_voltage = bytearray(struct.pack("B", battery_voltage()))
+                        batt_percentage_remaining = bytearray(struct.pack("B", battery_percentage_remaining()))
                         msg['payload'] = bytearray(
                             '\x18{:c}\x01'  # header, sequence number, command identifier
                             # attribute ID (2 bytes), status (1 byte), data type (1 byte), value (variable length)
-                            '\x20\x00\x00\x20'.format(a[1])) + battery_voltage + bytearray(  # battery voltage (1 byte - uint8)
-                            '\x21\x00\x00\x20') + get_battery_charge()
+                            '\x20\x00\x00\x20'.format(a[1])) + batt_voltage + bytearray(  # battery voltage (1 byte - uint8)
+                            '\x21\x00\x00\x20') + batt_percentage_remaining
                         if a[3] == 0x21:
                             msg['payload'] = bytearray(
                                 '\x18{:c}\x01'  # header, sequence number, command identifier
                                 # attribute ID (2 bytes), status (1 byte), data type (1 byte), value (variable length)
-                                '\x21\x00\x00\x20'.format(a[1])) + get_battery_charge()
+                                '\x21\x00\x00\x20'.format(a[1])) + battery_percentage_remaining()
                         send()
                     # configure reporting '0x06'
                     elif a[2] == 0x06:
@@ -264,7 +281,7 @@ def process_msg():
                     # read attributes '0x00'
                     if a[2] == 0x00:
                         # read attributes response '0x01'
-                        present_value = bytearray(struct.pack("f", valve.revs))
+                        present_value = bytearray(struct.pack("f", rev_counter))
                         msg['payload'] = bytearray(
                             '\x18{:c}\x01'  # header, sequence number, command identifier
                             # attribute ID (2 bytes), status (1 byte), data type (1 byte), value (variable length)
@@ -331,9 +348,7 @@ def report_attributes(cluster):
             '\x00\x00\x10{:c}'.format(on_off_attributes['OnOff']))
         send()
     elif cluster == 0x000d:
-        global rev_counter
-        rev_counter += 0.1
-        present_value = bytearray(struct.pack("f", valve.revs))  # rev_counter))
+        present_value = bytearray(struct.pack("f", rev_counter))
         # print(["0x%02x" % b for b in present_value])
         msg['cluster'] = 0x000d
         msg['source_ep'] = 0x01  # dest and source are swapped in the send function, should probably change this
@@ -367,11 +382,12 @@ def report_attributes(cluster):
         send()
 
     elif cluster == 0x0001:
+        batt_voltage = bytearray(struct.pack("B", battery_voltage()))
+        batt_percentage_remaining = bytearray(struct.pack("B", battery_percentage_remaining()))
         msg['payload'] = bytearray(
             '\x18\x04\x0a'  # header, sequence number, command identifier
-            '\x21\x00'
-            '\x20'
-            ) + get_battery_charge()
+            '\x20\x00\x20') + batt_voltage + bytearray(  # battery voltage (1 byte - uint8)
+            '\x21\x00\x20') + batt_percentage_remaining  # battery % remaining (1 byte - uint8)
         msg['cluster'] = 0x0001
         msg['source_ep'] = 0x01  # dest and source are swapped in the send function, should probably change this
         msg['dest_ep'] = 0x55
