@@ -3,6 +3,7 @@ import struct
 import xbee
 import time
 
+import valve
 
 # on/off cluster attributes
 on_off_attributes = {
@@ -22,14 +23,22 @@ def send():
         xbee.transmit(xbee.ADDR_COORDINATOR, msg['payload'], source_ep=msg['dest_ep'], dest_ep=msg['source_ep'],
                       cluster=msg['cluster'], profile=msg['profile'], bcast_radius=0, tx_options=0)
         print('Transmit: %s\n' % msg['payload'])
+        # send_broadcast_digi_data('Transmit: %s\n' % msg['payload'])
+    except OSError:
+        print('OSError - could not send')
+
+
+def send_broadcast_digi_data(string):
+    try:
+        xbee.transmit(xbee.ADDR_BROADCAST, string)
     except OSError:
         print('OSError - could not send')
 
 
 def setup_xbee():
     xbee.atcmd("SM", 6)
-    xbee.atcmd("AV", 1)  # analogue voltage reference 2.5V
-    # xbee.atcmd("AV", 2)  # analogue voltage reference VDD
+    # xbee.atcmd("AV", 1)  # analogue voltage reference 2.5V
+    xbee.atcmd("AV", 2)  # analogue voltage reference VDD
 
 
 def reference_voltage():
@@ -46,11 +55,11 @@ def battery_voltage_mV():
     # print(valve.voltage_monitor.read())
     if not xbee.atcmd("AV") == 2:
         batt_voltage = int(voltage_monitor.read() * (reference_voltage() / 4096))
-        print('battery voltage %imV: ' % batt_voltage)
+        send_broadcast_digi_data('battery voltage %imV: ' % batt_voltage)
         return batt_voltage
     else:
         batt_voltage = xbee.atcmd("%V")
-        # print('battery voltage %i: ' % batt_voltage)
+        send_broadcast_digi_data('battery voltage %i: ' % batt_voltage)
         return batt_voltage
 
 
@@ -92,10 +101,11 @@ def get_network_address():
     print('Address High: %02x' % msg['address_high'])
     print('Address Low: %02x' % msg['address_low'])
     print("\nWaiting for data...\n")
-    time.sleep_ms(10000)
+    send_broadcast_digi_data("\nRouter-1 waiting for data...\n")
+    # time.sleep_ms(10000)
 
 
-def process_msg():
+def process_msg(device):
     # Check if the XBee has any message in the queue.
     received_msg = xbee.receive()
     # while received_msg:
@@ -332,37 +342,64 @@ def process_msg():
                 print('cluster: %04x not supported' % msg['cluster'])
             print('sequence number: %02x\n' % a[1])
         # received_msg = xbee.receive()
+
+        elif msg['dest_ep'] == 0xe8:
+            if (len(a) >= 3) and (a[0] & 0b11 == 0b00):
+                cmd = chr(a[1]) + chr(a[2])
+                print(cmd)
+                if len(a) == 3:
+                    rsp = xbee.atcmd(cmd)
+                    print(rsp)
+                else:
+                    rsp = xbee.atcmd(cmd, a[3])
+                    # rsp = xbee.atcmd(cmd)
+                send_broadcast_digi_data(bytearray(rsp.to_bytes(2, 'little')))
+            elif (len(a) >= 2) and (a[0] & 0b11 == 0b01):
+                print('TRV command')
+                if chr(a[1]) == 'P':
+                    print('goto revs {0}'.format(a[2]))
+                    device.goto_revs(a[2])
+                if chr(a[1]) == 'H':
+                    print('home')
+                    device.home_valve()
+                if chr(a[1]) == 'F':
+                    print('forwards')
+                    valve.Motor.forwards()
+                if chr(a[1]) == 'O':
+                    print('open')
+                    device.open_valve()
+                if chr(a[1]) == 'C':
+                    print('close')
+                    device.close_valve()
+                if chr(a[1]) == 'S':
+                    print('stop')
+                    valve.Motor.stop_soft()
+                if chr(a[1]) == 'G':
+                    print('revs :{0}'.format(device.valve_sensor.rev_counter))
+                    send_broadcast_digi_data(bytearray(device.valve_sensor.rev_counter.to_bytes(2, 'little')))
+                if chr(a[1]) == 'I':
+                    print('interupt')
+                    device.interupt = True
+            else:
+                print('invalid command')
     else:
+        # send_broadcast_digi_data(bytearray(b'what'))
         return None
 
 
 def report_attributes(cluster):
-    if cluster == 0x0006:
-        msg['cluster'] = 0x0006
+
+    if cluster == 0x0001:
+        batt_voltage = bytearray(struct.pack("B", battery_voltage()))
+        batt_percentage_remaining = bytearray(struct.pack("B", battery_percentage_remaining()))
+        msg['payload'] = bytearray(
+            '\x18\x04\x0a'  # header, sequence number, command identifier
+            '\x20\x00\x20') + batt_voltage + bytearray(  # battery voltage (1 byte - uint8)
+            '\x21\x00\x20') + batt_percentage_remaining  # battery % remaining (1 byte - uint8)
+        msg['cluster'] = 0x0001
         msg['source_ep'] = 0x01  # dest and source are swapped in the send function, should probably change this
         msg['dest_ep'] = 0x55
         msg['profile'] = 0x0104
-        msg['payload'] = bytearray(
-            '\x18\x01\x0a'  # replaced the sequence number with \x01
-            # attribute ID (2 bytes), data type (1 byte), value (variable length)
-            '\x00\x00\x10{:c}'.format(on_off_attributes['OnOff']))
-        send()
-    elif cluster == 0x000d:
-        present_value = bytearray(struct.pack("f", rev_counter))
-        # print(["0x%02x" % b for b in present_value])
-        msg['cluster'] = 0x000d
-        msg['source_ep'] = 0x01  # dest and source are swapped in the send function, should probably change this
-        msg['dest_ep'] = 0x55
-        msg['profile'] = 0x0104
-        msg['payload'] = bytearray(
-            '\x18\x02\x0a'  # replaced the sequence number with \x02
-            # attribute ID (2 bytes), data type (1 byte), value (variable length)
-            # '\x1c\x00\x42\x04revs'  # Description (variable bytes)
-            # '\x51\x00\x10\x00'  # OutOfService (1 byte)
-            '\x55\x00'  # attribute identifier
-            '\x39'  # data type
-            # '\x6f\x00\x18\x00'  # StatusFlags (1 byte)
-            ) + present_value  # PresentValue (4 bytes)
         send()
 
     elif cluster == 0x0002:
@@ -381,17 +418,33 @@ def report_attributes(cluster):
         msg['profile'] = 0x0104
         send()
 
-    elif cluster == 0x0001:
-        batt_voltage = bytearray(struct.pack("B", battery_voltage()))
-        batt_percentage_remaining = bytearray(struct.pack("B", battery_percentage_remaining()))
-        msg['payload'] = bytearray(
-            '\x18\x04\x0a'  # header, sequence number, command identifier
-            '\x20\x00\x20') + batt_voltage + bytearray(  # battery voltage (1 byte - uint8)
-            '\x21\x00\x20') + batt_percentage_remaining  # battery % remaining (1 byte - uint8)
-        msg['cluster'] = 0x0001
+    elif cluster == 0x0006:
+        msg['cluster'] = 0x0006
         msg['source_ep'] = 0x01  # dest and source are swapped in the send function, should probably change this
         msg['dest_ep'] = 0x55
         msg['profile'] = 0x0104
+        msg['payload'] = bytearray(
+            '\x18\x01\x0a'  # replaced the sequence number with \x01
+            # attribute ID (2 bytes), data type (1 byte), value (variable length)
+            '\x00\x00\x10{:c}'.format(on_off_attributes['OnOff']))
+        send()
+
+    elif cluster == 0x000d:
+        present_value = bytearray(struct.pack("f", rev_counter))
+        # print(["0x%02x" % b for b in present_value])
+        msg['cluster'] = 0x000d
+        msg['source_ep'] = 0x01  # dest and source are swapped in the send function, should probably change this
+        msg['dest_ep'] = 0x55
+        msg['profile'] = 0x0104
+        msg['payload'] = bytearray(
+            '\x18\x02\x0a'  # replaced the sequence number with \x02
+            # attribute ID (2 bytes), data type (1 byte), value (variable length)
+            # '\x1c\x00\x42\x04revs'  # Description (variable bytes)
+            # '\x51\x00\x10\x00'  # OutOfService (1 byte)
+            '\x55\x00'  # attribute identifier
+            '\x39'  # data type
+            # '\x6f\x00\x18\x00'  # StatusFlags (1 byte)
+            ) + present_value  # PresentValue (4 bytes)
         send()
 
     elif cluster == 0x000f:
