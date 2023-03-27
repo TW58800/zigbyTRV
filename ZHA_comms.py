@@ -367,10 +367,10 @@ def process_msg(device):
                     valve.Motor.forwards()
                 if chr(a[1]) == 'O':
                     print('open')
-                    device.open_valve()
+                    device.goto_revs(0)
                 if chr(a[1]) == 'C':
                     print('close')
-                    device.close_valve()
+                    device.goto_revs(device.closed_position)
                 if chr(a[1]) == 'S':
                     print('stop')
                     valve.Motor.stop_soft()

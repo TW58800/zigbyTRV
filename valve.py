@@ -70,7 +70,7 @@ class Sensor:
 class Valve:
     valve_sensor = Sensor()
     STALL_TIME = 300  # milliseconds
-    open_position = 0
+    closed_position = 0
     motor_direction = 0
     interupt = False
     
@@ -101,7 +101,7 @@ class Valve:
     def actuate_valve(self, direction):
         if (direction == 'open') & ZHA_comms.on_off_attributes['OnOff']:
             print('opening')
-            self.goto_revs(self.open_position)
+            self.goto_revs(self.closed_position)
         elif (direction == 'close') & (not ZHA_comms.on_off_attributes['OnOff']):
             print('closing')
             self.goto_revs(0)
@@ -113,60 +113,52 @@ class Valve:
         # goes to the closed position
         print('homing')
         self.open_valve()
-        while self.valve_moving(self.STALL_TIME):
-            ZHA_comms.process_msg(self)
+        self.valve_moving(self.STALL_TIME)
         print('reached end of travel')
-        self.stop_valve()
         self.valve_sensor.rev_counter = 0
         time.sleep_ms(500)
         # goes to the open position
         print('moving to opposite end of travel')
         self.close_valve()
-        print('direction %i: \n' % self.motor_direction)
-        while self.valve_moving(self.STALL_TIME):
-            ZHA_comms.process_msg(self)
-        self.stop_valve()
+        self.valve_moving(self.STALL_TIME)
         if self.valve_sensor.rev_counter > 150:
-            self.open_position = self.valve_sensor.rev_counter - 50
+            self.closed_position = self.valve_sensor.rev_counter - 50
             self.valve_sensor.rev_counter -= 50
             ZHA_comms.rev_counter = self.valve_sensor.rev_counter
-            print('open position: %s\n' % self.open_position)
+            print('closed position: %s\n' % self.closed_position)
         else:
             print('insufficint valve travel, revs: %i\n' % self.valve_sensor.rev_counter)
 
     def valve_moving(self, max_period):
-        if self.interupt:
-            self.interupt = False
-            self.valve_sensor.reset_timer()
-            return False
-        # if printing, baud rate needs to be above 9600 to capture readings a fast as they are being created
-        self.valve_sensor.read(self.motor_direction)
-        if self.valve_sensor.period < max_period:
-            return True
-        else:
-            self.valve_sensor.reset_timer()
-            return False
+        while (self.valve_sensor.period < max_period) & (not self.interupt):
+            self.valve_sensor.read(self.motor_direction)
+            # if printing, baud rate needs to be above 9600 to capture readings a fast as they are being created
+            ZHA_comms.process_msg(self)
+        self.stop_valve()
+        self.valve_sensor.period = 0
+        self.valve_sensor.reset_timer()
+        self.interupt = False
 
     def get_period(self):
         return self.valve_sensor.period
 
     def goto_revs(self, position: int):
-        if self.valve_sensor.rev_counter < position:
+        if self.valve_sensor.rev_counter > position:
             self.open_valve()
-            while self.valve_sensor.rev_counter < position:
-                self.valve_moving(2000)
+            while (self.valve_sensor.rev_counter > position) & (self.valve_sensor.period < self.STALL_TIME):
                 ZHA_comms.process_msg(self)
+                self.valve_sensor.read(self.motor_direction)
                 if self.valve_sensor.period > self.STALL_TIME:
                     print('valve stalling, period (ms): %i' % self.valve_sensor.period)
-                print('opening: %i' % self.valve_sensor.rev_counter)
             self.stop_valve()
-        elif self.valve_sensor.rev_counter > position:
+            self.valve_sensor.reset_timer()
+        elif self.valve_sensor.rev_counter < position:
             self.close_valve()
-            while self.valve_sensor.rev_counter > position:
-                self.valve_moving()
+            while (self.valve_sensor.rev_counter < position) & (self.valve_sensor.period < self.STALL_TIME):
                 ZHA_comms.process_msg(self)
-                print('closing: %i' % self.valve_sensor.rev_counter)
+                self.valve_sensor.read(self.motor_direction)
             self.stop_valve()
+            self.valve_sensor.reset_timer()
         else:
             print('valve already at desired position')
 
