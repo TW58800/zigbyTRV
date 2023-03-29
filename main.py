@@ -1,17 +1,16 @@
 import ZHA_comms
-import valve
 import time
 
 print(" +--------------------------------------------+")
 print(" | XBee MicroPython Radiator Valve Controller |")
 print(" +--------------------------------------------+\n")
 
-TRV = valve.Valve()
-ZHA_comms.setup_xbee()
-TRV.stop_valve()
-ZHA_comms.get_network_address()
+trv = ZHA_comms.TRV()
+trv.setup_xbee()
+trv.valve.stop_valve()
+trv.get_network_address()
 
-while ZHA_comms.process_msg(TRV) is not None:
+while trv.process_msg() is not None:
     time.sleep_ms(500)  # to avoid starting homing before HA configuration has finished
 
 # TRV.home_valve()
@@ -22,7 +21,7 @@ while True:
         print('not connected to network')
         ZHA_comms.xbee.atcmd("CB", 1)
         time.sleep_ms(10000)
-    ZHA_comms.process_msg(TRV)
+    trv.process_msg()
     # TRV.demand()
     # print("On/Off attribute: %s" % ZHA_comms.on_off_attributes['OnOff'])
     # print('revs: %03i\n' % valve.revs)
@@ -32,7 +31,7 @@ while True:
         counter = time.ticks_ms()
         print('reporting attributes\n')
         # print('voltage: %03i\n' % ZHA_comms.get_voltage())
-        ZHA_comms.report_attributes(0x000d)
+        trv.report_attributes(0x000d)
         # ZHA_comms.report_attributes(0x0006)
         # ZHA_comms.report_attributes(0x0002)
         # ZHA_comms.report_attributes(0x0001)
