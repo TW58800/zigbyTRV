@@ -1,4 +1,5 @@
 import ZHA_comms
+import valve
 import time
 
 print(" +--------------------------------------------+")
@@ -6,6 +7,8 @@ print(" | XBee MicroPython Radiator Valve Controller |")
 print(" +--------------------------------------------+\n")
 
 trv = ZHA_comms.TRV()
+valve = valve.Valve(trv)
+trv.valve = valve
 trv.setup_xbee()
 trv.valve.stop_valve()
 trv.get_network_address()

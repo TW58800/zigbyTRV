@@ -73,9 +73,12 @@ class Valve:
     closed_position = 0
     motor_direction = 0
     interupt = False
+
+    def __init__(self, trv):
+        self.trv = trv
     
     def demand(self):
-        if ZHA_comms.on_off_attributes['OnOff']:  # on
+        if self.trv.on_off_attributes['OnOff']:  # on
             self.actuate_valve('open')
         else:  # off
             self.actuate_valve('close')
@@ -99,10 +102,10 @@ class Valve:
         return 0
 
     def actuate_valve(self, direction):
-        if (direction == 'open') & ZHA_comms.on_off_attributes['OnOff']:
+        if (direction == 'open') & self.trv.on_off_attributes['OnOff']:
             print('opening')
             self.goto_revs(self.closed_position)
-        elif (direction == 'close') & (not ZHA_comms.on_off_attributes['OnOff']):
+        elif (direction == 'close') & (not self.trv.on_off_attributes['OnOff']):
             print('closing')
             self.goto_revs(0)
         else:
@@ -124,7 +127,7 @@ class Valve:
         if self.valve_sensor.rev_counter > 150:
             self.closed_position = self.valve_sensor.rev_counter - 50
             self.valve_sensor.rev_counter -= 50
-            ZHA_comms.rev_counter = self.valve_sensor.rev_counter
+            self.trv.rev_counter = self.valve_sensor.rev_counter
             print('closed position: %s\n' % self.closed_position)
         else:
             print('insufficint valve travel, revs: %i\n' % self.valve_sensor.rev_counter)
@@ -133,7 +136,7 @@ class Valve:
         while (self.valve_sensor.period < max_period) & (not self.interupt):
             self.valve_sensor.read(self.motor_direction)
             # if printing, baud rate needs to be above 9600 to capture readings a fast as they are being created
-            ZHA_comms.process_msg(self)
+            self.trv.process_msg()
         self.stop_valve()
         self.valve_sensor.period = 0
         self.valve_sensor.reset_timer()
@@ -146,7 +149,7 @@ class Valve:
         if self.valve_sensor.rev_counter > position:
             self.open_valve()
             while (self.valve_sensor.rev_counter > position) & (self.valve_sensor.period < self.STALL_TIME):
-                ZHA_comms.process_msg(self)
+                self.trv.process_msg()
                 self.valve_sensor.read(self.motor_direction)
                 if self.valve_sensor.period > self.STALL_TIME:
                     print('valve stalling, period (ms): %i' % self.valve_sensor.period)
@@ -155,7 +158,7 @@ class Valve:
         elif self.valve_sensor.rev_counter < position:
             self.close_valve()
             while (self.valve_sensor.rev_counter < position) & (self.valve_sensor.period < self.STALL_TIME):
-                ZHA_comms.process_msg(self)
+                self.trv.process_msg()
                 self.valve_sensor.read(self.motor_direction)
             self.stop_valve()
             self.valve_sensor.reset_timer()
