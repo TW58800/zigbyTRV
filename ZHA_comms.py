@@ -2,7 +2,6 @@ from machine import ADC
 import struct
 import xbee
 import time
-from valve import Valve
 
 
 class TRV:
@@ -21,6 +20,46 @@ class TRV:
     voltage_monitor = ADC('D2')
     awake_flag = 0
 
+    def run(self):
+        counter = time.ticks_ms()
+        while True:
+            if self.xbee.atcmd("AI") != 0:
+                print('not connected to network')
+                self.xbee.atcmd("CB", 1)
+                time.sleep_ms(10000)
+            self.process_msg()
+            # self.valve.demand()
+            # print("On/Off attribute: %s" % ZHA_comms.on_off_attributes['OnOff'])
+            # print('revs: %03i\n' % valve.revs)
+            # time.sleep_ms(1000)
+            if time.ticks_diff(time.ticks_ms(), counter) > 30000:  # 120000:
+                counter = time.ticks_ms()
+                # print('reporting attributes\n')
+                # print('voltage: %03i\n' % self.get_voltage())
+                # self.report_attributes(0x000d)
+                # self.report_attributes(0x0006)
+                # self.report_attributes(0x0002)
+                # self.report_attributes(0x0001)
+                # print("sleeping for 60 seconds\n")
+                # self.awake_flag = 0
+                # self.report_attributes(0x000f)
+                # self.xbee.XBee().sleep_now(60000, pin_wake=True)
+                # self.awake_flag = 1
+                # self.report_attributes(0x000f)
+
+    def initialise(self):
+        self.setup_xbee()
+        self.valve.stop_valve()
+        self.get_network_address()
+        while self.process_msg() is not None:
+            time.sleep_ms(500)  # to avoid starting homing before HA configuration has finished
+        # self.valve.home_valve()
+
+    def setup_xbee(self):
+        self.xbee.atcmd("SM", 6)
+        # xbee.atcmd("AV", 1)  # analogue voltage reference 2.5V
+        self.xbee.atcmd("AV", 2)  # analogue voltage reference VDD
+
     def send(self):
         try:
             xbee.transmit(xbee.ADDR_COORDINATOR, self.msg['payload'], source_ep=self.msg['dest_ep'], dest_ep=self.msg['source_ep'],
@@ -36,11 +75,6 @@ class TRV:
             xbee.transmit(xbee.ADDR_BROADCAST, string)
         except OSError:
             print('OSError - could not send')
-
-    def setup_xbee(self):
-        self.xbee.atcmd("SM", 6)
-        # xbee.atcmd("AV", 1)  # analogue voltage reference 2.5V
-        self.xbee.atcmd("AV", 2)  # analogue voltage reference VDD
 
     def reference_voltage(self):
         av = self.xbee.atcmd("AV")
