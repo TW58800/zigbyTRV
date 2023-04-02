@@ -28,24 +28,25 @@ class TRV:
                 self.xbee.atcmd("CB", 1)
                 time.sleep_ms(10000)
             self.process_msg()
-            # self.valve.demand()
-            # print("On/Off attribute: %s" % ZHA_comms.on_off_attributes['OnOff'])
             # print('revs: %03i\n' % valve.revs)
             # time.sleep_ms(1000)
-            if time.ticks_diff(time.ticks_ms(), counter) > 30000:  # 120000:
+            if time.ticks_diff(time.ticks_ms(), counter) > 10000:  # 180000:
                 counter = time.ticks_ms()
-                # print('reporting attributes\n')
-                # print('voltage: %03i\n' % self.get_voltage())
-                # self.report_attributes(0x000d)
-                # self.report_attributes(0x0006)
-                # self.report_attributes(0x0002)
-                # self.report_attributes(0x0001)
+                print("On/Off attribute: %s" % self.on_off_attributes['OnOff'])
+                print("On/Off trv attribute: %s" % self.valve.trv.on_off_attributes['OnOff'])
+                '''
+                print('reporting attributes\n')
+                self.report_attributes(0x000d)
+                self.report_attributes(0x0006)
+                self.report_attributes(0x0002)
+                self.report_attributes(0x0001)
                 # print("sleeping for 60 seconds\n")
                 # self.awake_flag = 0
-                # self.report_attributes(0x000f)
+                self.report_attributes(0x000f)
                 # self.xbee.XBee().sleep_now(60000, pin_wake=True)
                 # self.awake_flag = 1
                 # self.report_attributes(0x000f)
+                '''
 
     def initialise(self):
         self.setup_xbee()
@@ -53,7 +54,7 @@ class TRV:
         self.get_network_address()
         while self.process_msg() is not None:
             time.sleep_ms(500)  # to avoid starting homing before HA configuration has finished
-        # self.valve.home_valve()
+        self.valve.home_valve()
 
     def setup_xbee(self):
         self.xbee.atcmd("SM", 6)
@@ -89,11 +90,11 @@ class TRV:
         # print(valve.voltage_monitor.read())
         if not self.xbee.atcmd("AV") == 2:
             batt_voltage = int(self.voltage_monitor.read() * (self.reference_voltage() / 4096))
-            self.send_broadcast_digi_data('battery voltage %imV: ' % batt_voltage)
+            # self.send_broadcast_digi_data('battery voltage %imV: ' % batt_voltage)
             return batt_voltage
         else:
             batt_voltage = self.xbee.atcmd("%V")
-            self.send_broadcast_digi_data('battery voltage %i: ' % batt_voltage)
+            # self.send_broadcast_digi_data('battery voltage %i: ' % batt_voltage)
             return batt_voltage
 
     def battery_voltage(self):
@@ -312,6 +313,7 @@ class TRV:
                             '\x18{:c}\x0a'  # header, sequence number, command identifier
                             '\x00\x00\x10{:c}'.format(a[1], self.on_off_attributes['OnOff']))  # attribute identifier (2 bytes), data type (1 byte), value (1 byte)
                         self.send()
+                        self.valve.demand()
 
                 # 'analogue output' cluster
                 elif self.msg['cluster'] == 0x000d:
@@ -386,14 +388,15 @@ class TRV:
                 elif (len(a) >= 2) and (a[0] & 0b11 == 0b01):
                     print('TRV command')
                     if chr(a[1]) == 'P':
-                        print('goto revs {0}'.format(a[2]))
-                        self.valve.goto_revs(a[2])
+                        if len(a) > 2:
+                            print('goto revs {0}'.format(a[2]))
+                            self.valve.goto_revs(a[2])
                     if chr(a[1]) == 'H':
                         print('home')
                         self.valve.home_valve()
                     if chr(a[1]) == 'F':
                         print('forwards')
-                        self.valve.Motor.forwards()
+                        self.valve.motor.forwards()
                     if chr(a[1]) == 'O':
                         print('open')
                         self.valve.goto_revs(0)
@@ -402,7 +405,7 @@ class TRV:
                         self.valve.goto_revs(self.valve.closed_position)
                     if chr(a[1]) == 'S':
                         print('stop')
-                        self.valve.Motor.stop_soft()
+                        self.valve.motor.stop_soft()
                     if chr(a[1]) == 'G':
                         print('revs :{0}'.format(self.valve.valve_sensor.rev_counter))
                         self.send_broadcast_digi_data(bytearray(self.valve.valve_sensor.rev_counter.to_bytes(2, 'little')))
@@ -476,7 +479,6 @@ class TRV:
             self.send()
 
         elif cluster == 0x000f:
-            self.awake_flag
             binary_sensor = bytearray(struct.pack("B", self.awake_flag))
             self.msg['payload'] = bytearray(
                 '\x18\x05\x0a'  # header, sequence number, command identifier

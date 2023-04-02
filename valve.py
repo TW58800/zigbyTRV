@@ -38,7 +38,6 @@ class Motor:
 
 class Sensor:
     ADC = ADC('D3')  # create an analog pin on D3
-    # above_threshold = True
     period = 0
     last_reading = 0
     rev_counter = 0
@@ -51,24 +50,34 @@ class Sensor:
     def read(self, direction):
         sensor_value = self.ADC.read()
         # print(sensor_value) # set xbee ref voltage (AT command 'AV') to VDD
-        if (sensor_value >= 1500) & (self.last_reading < 1500):  # (not self.above_threshold):
-            # self.above_threshold = True
-            if self.timer.set:
-                self.period = time.ticks_diff(time.ticks_ms(), self.timer.time)
-            else:
-                self.period = 0
+        if (sensor_value >= 1500) & (self.last_reading < 1500):
+            print(self.period)
+            self.reset_period()
             self.timer.time = time.ticks_ms()
             self.timer.set = True
             self.rev_counter += direction
             print(self.rev_counter)
         self.last_reading = sensor_value
+        if self.timer.set:
+            self.period = time.ticks_diff(time.ticks_ms(), self.timer.time)
+        else:
+            self.period = 0
 
     def reset_timer(self):
         self.timer.set = False
 
+    def reset_period(self):
+        self.period = 0
+
+    def reset(self):
+        self.reset_period()
+        self.reset_timer()
+
 
 class Valve:
+    motor = Motor()
     valve_sensor = Sensor()
+    trv = None
     STALL_TIME = 300  # milliseconds
     closed_position = 0
     motor_direction = 0
@@ -84,43 +93,46 @@ class Valve:
             self.actuate_valve('close')
 
     def open_valve(self):
-        Motor.forwards()
+        self.motor.forwards()
         self.motor_direction = -1
         # print('opening')
         return 1
 
     def close_valve(self):
-        Motor.reverse()
+        self.motor.reverse()
         self.motor_direction = 1
         # print('closing')
         return -1
 
     def stop_valve(self):
-        Motor.stop_hard()
+        self.motor.stop_hard()
         self.motor_direction = 0
         # print('stopped')
         return 0
 
     def actuate_valve(self, direction):
-        if (direction == 'open') & self.trv.on_off_attributes['OnOff']:
-            print('opening')
-            self.goto_revs(self.closed_position)
-        elif (direction == 'close') & (not self.trv.on_off_attributes['OnOff']):
+        if direction == 'close':
+            self.stop_valve()
+            time.sleep_ms(300)
             print('closing')
+            self.goto_revs(self.closed_position)
+        elif direction == 'open':
+            self.stop_valve()
+            time.sleep_ms(300)
+            print('opening')
             self.goto_revs(0)
         else:
             self.stop_valve()
+            print('stopping')
             # print('revs: %i' % revs)
 
     def home_valve(self):
-        # goes to the closed position
         print('homing')
         self.open_valve()
         self.valve_moving(self.STALL_TIME)
         print('reached end of travel')
         self.valve_sensor.rev_counter = 0
         time.sleep_ms(500)
-        # goes to the open position
         print('moving to opposite end of travel')
         self.close_valve()
         self.valve_moving(self.STALL_TIME)
@@ -128,6 +140,7 @@ class Valve:
             self.closed_position = self.valve_sensor.rev_counter - 50
             self.valve_sensor.rev_counter -= 50
             self.trv.rev_counter = self.valve_sensor.rev_counter
+            self.trv.on_off_attributes['OnOff'] = False
             print('closed position: %s\n' % self.closed_position)
         else:
             print('insufficint valve travel, revs: %i\n' % self.valve_sensor.rev_counter)
@@ -138,8 +151,7 @@ class Valve:
             # if printing, baud rate needs to be above 9600 to capture readings a fast as they are being created
             self.trv.process_msg()
         self.stop_valve()
-        self.valve_sensor.period = 0
-        self.valve_sensor.reset_timer()
+        self.valve_sensor.reset()
         self.interupt = False
 
     def get_period(self):
