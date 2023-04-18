@@ -29,17 +29,7 @@ class TRV:
             self.process_msg()
             if time.ticks_diff(time.ticks_ms(), counter) > 180000:
                 counter = time.ticks_ms()
-                # print('reporting attributes\n')
-                self.report_attributes(0x0001)
-                self.report_attributes(0x0002)
-                self.report_attributes(0x0006)
-                self.report_attributes(0x000d)
-                # print("sleeping for 60 seconds\n")
-                # self.awake_flag = 0
-                self.report_attributes(0x000f)
-                # self.xbee.XBee().sleep_now(60000, pin_wake=True)
-                # self.awake_flag = 1
-                # self.report_attributes(0x000f)
+                self.report_attributes()
 
     def initialise(self):
         self.setup_xbee()
@@ -47,16 +37,31 @@ class TRV:
         self.get_network_address()
         # while self.process_msg() is not None:
         #    time.sleep_ms(500)  # to avoid starting homing before HA configuration has finished
-        self.valve.home_valve()
+        # self.valve.home_valve()
+        # self.report_attributes()
 
     def setup_xbee(self):
         self.xbee.atcmd("SM", 6)
         # xbee.atcmd("AV", 1)  # analogue voltage reference 2.5V
         self.xbee.atcmd("AV", 2)  # analogue voltage reference VDD
 
+    def report_attributes(self):
+        # print('reporting attributes\n')
+        self.report_attribute(0x0000)
+        self.report_attribute(0x0001)
+        self.report_attribute(0x0002)
+        self.report_attribute(0x0006)
+        self.report_attribute(0x000d)
+        # print("sleeping for 60 seconds\n")
+        # self.awake_flag = 0
+        self.report_attribute(0x000f)
+        # self.xbee.XBee().sleep_now(60000, pin_wake=True)
+        # self.awake_flag = 1
+        # self.report_attributes(0x000f)
+
     def send(self):
         try:
-            xbee.transmit(xbee.ADDR_COORDINATOR, self.msg['payload'], source_ep=self.msg['dest_ep'], dest_ep=self.msg['source_ep'],
+            xbee.transmit(xbee.ADDR_COORDINATOR, self.msg['payload'], source_ep=self.msg['source_ep'], dest_ep=self.msg['dest_ep'],
                           cluster=self.msg['cluster'], profile=self.msg['profile'], bcast_radius=0, tx_options=0)
             print('Transmit: %s\n' % self.msg['payload'])
         except OSError:
@@ -130,21 +135,21 @@ class TRV:
         # while received_self.msg:
         if received_msg is not None:
             # Get the sender's 64-bit address and payload from the received message.
-            self.msg['sender'] = received_msg['sender_eui64']
-            self.msg['payload'] = received_msg['payload']
+            # self.msg['sender'] = received_msg['sender_eui64']
+            # self.msg['payload'] = received_msg['payload']
             self.msg['cluster'] = received_msg['cluster']
-            self.msg['source_ep'] = received_msg['source_ep']
-            self.msg['dest_ep'] = received_msg['dest_ep']
+            self.msg['dest_ep'] = received_msg['source_ep']
+            self.msg['source_ep'] = received_msg['dest_ep']
             self.msg['profile'] = received_msg['profile']
             print("\nData received from %s >> \nPayload: %s \nCluster: %04x \nSource ep: %02x \nDestination ep: %02x"
                   "\nProfile: %04x\n" % (
-                      ''.join('{:02x}'.format(x).upper() for x in self.msg['sender']), self.msg['payload'], self.msg['cluster'],
-                      self.msg['source_ep'], self.msg['dest_ep'], self.msg['profile']))
-            self.data = list(self.msg['payload'])
+                      ''.join('{:02x}'.format(x).upper() for x in received_msg['sender_eui64']), received_msg['payload'], received_msg['cluster'],
+                      received_msg['source_ep'], received_msg['dest_ep'], received_msg['profile']))
+            self.data = list(received_msg['payload'])
             print('processing message')
             print('sequence number: %02x' % self.data[1])
             # ZDO endpoint
-            if self.msg['dest_ep'] == 0x0000:
+            if self.msg['source_ep'] == 0x0000:
                 # active endpoints request
                 if self.msg['cluster'] == 0x0005:
                     self.msg['payload'] = bytearray(
@@ -188,7 +193,7 @@ class TRV:
                 print('Sequence number: %02x\n\n' % self.data[0])
     # ---------------------------------------------------------------------------------------------------------------------
             # endpoint for Tim's radiator valve controller device
-            elif self.msg['dest_ep'] == 0x55:
+            elif self.msg['source_ep'] == 0x55:
                 # 'basic' cluster
                 if self.msg['cluster'] == 0x0000:
                     # global cluster commands
@@ -199,8 +204,10 @@ class TRV:
                             self.msg['payload'] = bytearray(
                                 '\x18{:c}\x01'  # header global/cluster-specific (2 bits) manufacturer specific (1 bit) direction (1 bit [1 = server to client]) disable default response (1 bit [0 = default response returned, e.g. 1 used when response frame is a direct effect of a previously recieved frame])
                                 # attribute ID (2 bytes), status (1 byte), data type (1 byte), value (variable length)
+                                # '\x00\x00\x00\x20\x02'  # zigby stack version: 02
                                 '\x04\x00\x00\x42\x09TW-Design'
                                 '\x05\x00\x00\x42\x08MW-Valve'
+                                # '\x07\x00\x00\x30\x03'  # power source - 03 = battery
                                 .format(self.data[1]))
                             self.send()
                         else:
@@ -218,8 +225,9 @@ class TRV:
                                 '\x18{:c}\x01'  # header, sequence number, command identifier
                                 # attribute ID (2 bytes), status (1 byte), data type (1 byte), value (variable length)
                                 '\x20\x00\x00\x20'.format(self.data[1])) + batt_voltage + bytearray(  # battery voltage (1 byte - uint8)
-                                '\x21\x00\x00\x20') + batt_percentage_remaining
-                            if self.data[3] == 0x21:
+                                '\x21\x00\x00\x20') + batt_percentage_remaining + bytearray(
+                                '\x31\x00\x00\x30\x03')  # battery size: AA
+                            if self.data[3] == 0x21:  # attribute identifier: battery percentage
                                 self.msg['payload'] = bytearray(
                                     '\x18{:c}\x01'  # header, sequence number, command identifier
                                     # attribute ID (2 bytes), status (1 byte), data type (1 byte), value (variable length)
@@ -395,22 +403,36 @@ class TRV:
                 else:
                     print('invalid command')
 
-    def report_attributes(self, cluster):
+    def report_attribute(self, cluster):
+        self.msg['source_ep'] = 0x55
+        self.msg['dest_ep'] = 0x01
+        self.msg['profile'] = 0x0104
+
+        # 'basic' cluster
+        if cluster == 0x0000:
+            self.msg['cluster'] = 0x0000
+            self.msg['payload'] = bytearray(
+                '\x18\x06\x0a'  # header global/cluster-specific (2 bits) manufacturer specific (1 bit) direction (1 bit [1 = server to client]) disable default response (1 bit [0 = default response returned, e.g. 1 used when response frame is a direct effect of a previously recieved frame])
+                # attribute ID (2 bytes), status (1 byte), data type (1 byte), value (variable length)
+                # '\x00\x00\x00\x20\x02'  # zigby stack version: 02
+                '\x04\x00\x42\x09TW-Design'
+                '\x05\x00\x42\x08MW-Valve'
+                '\x07\x00\x30\x03'  # power source: 03 = battery
+            )
+            self.send()
 
         if cluster == 0x0001:
+            self.msg['cluster'] = 0x0001
             batt_voltage = bytearray(struct.pack("B", self.battery_voltage()))
             batt_percentage_remaining = bytearray(struct.pack("B", self.battery_percentage_remaining()))
             self.msg['payload'] = bytearray(
                 '\x18\x04\x0a'  # header, sequence number, command identifier
                 '\x20\x00\x20') + batt_voltage + bytearray(  # battery voltage (1 byte - uint8)
                 '\x21\x00\x20') + batt_percentage_remaining  # battery % remaining (1 byte - uint8)
-            self.msg['cluster'] = 0x0001
-            self.msg['source_ep'] = 0x01  # dest and source are swapped in the send function, should probably change this
-            self.msg['dest_ep'] = 0x55
-            self.msg['profile'] = 0x0104
             self.send()
 
         elif cluster == 0x0002:
+            self.msg['cluster'] = 0x0002
             device_temperature = bytearray(struct.pack("h", self.get_temperature()))
             # print(["0x%02x" % b for b in device_temperature])
             # print(device_temperature)
@@ -420,17 +442,10 @@ class TRV:
                 '\x00\x00'
                 '\x29'
                 ) + device_temperature
-            self.msg['cluster'] = 0x0002
-            self.msg['source_ep'] = 0x01  # dest and source are swapped in the send function, should probably change this
-            self.msg['dest_ep'] = 0x55
-            self.msg['profile'] = 0x0104
             self.send()
 
         elif cluster == 0x0006:
             self.msg['cluster'] = 0x0006
-            self.msg['source_ep'] = 0x01  # dest and source are swapped in the send function, should probably change this
-            self.msg['dest_ep'] = 0x55
-            self.msg['profile'] = 0x0104
             self.msg['payload'] = bytearray(
                 '\x18\x01\x0a'  # replaced the sequence number with \x01
                 # attribute ID (2 bytes), data type (1 byte), value (variable length)
@@ -438,12 +453,9 @@ class TRV:
             self.send()
 
         elif cluster == 0x000d:
+            self.msg['cluster'] = 0x000d
             present_value = bytearray(struct.pack("f", self.valve.valve_sensor.rev_counter))
             # print(["0x%02x" % b for b in present_value])
-            self.msg['cluster'] = 0x000d
-            self.msg['source_ep'] = 0x01  # dest and source are swapped in the send function, should probably change this
-            self.msg['dest_ep'] = 0x55
-            self.msg['profile'] = 0x0104
             self.msg['payload'] = bytearray(
                 '\x18\x02\x0a'  # replaced the sequence number with \x02
                 # attribute ID (2 bytes), data type (1 byte), value (variable length)
@@ -456,14 +468,11 @@ class TRV:
             self.send()
 
         elif cluster == 0x000f:
+            self.msg['cluster'] = 0x000f
             binary_sensor = bytearray(struct.pack("B", self.awake_flag))
             self.msg['payload'] = bytearray(
                 '\x18\x05\x0a'  # header, sequence number, command identifier
                 '\x55\x00'
                 '\x10'
                 ) + binary_sensor
-            self.msg['cluster'] = 0x000f
-            self.msg['source_ep'] = 0x01  # dest and source are swapped in the send function, should probably change this
-            self.msg['dest_ep'] = 0x55
-            self.msg['profile'] = 0x0104
             self.send()
