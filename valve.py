@@ -44,8 +44,11 @@ class Motor:
 class Sensor:
     ADC = ADC('D3')  # create an analog pin on D3
     period = 0
+    peek_period = 200
+    period_filtered = 0
     last_reading = 0
     rev_counter = 0
+    THRESHOLD = 1500
 
     class Timer:
         set = False
@@ -57,8 +60,11 @@ class Sensor:
 
     def read(self):
         sensor_value = self.ADC.read()  # set xbee ref voltage (AT command 'AV') to VDD
-        if (sensor_value >= 1500) & (self.last_reading < 1500):
+        if (sensor_value >= self.THRESHOLD) & (self.last_reading < self.THRESHOLD):
             # print(self.period)
+            if (self.period > 10) and (self.period < self.peek_period):
+                self.peek_period = self.period
+            self.period_filtered = 0.75 * self.period_filtered + 0.25 * self.period
             self.reset_period()
             self.timer.time = time.ticks_ms()
             self.timer.set = True
@@ -80,15 +86,19 @@ class Sensor:
         self.reset_period()
         self.reset_timer()
 
+    def set_threshold(self, value):
+        self.THRESHOLD = value
+
 
 class Valve:
     motor = Motor()
     valve_sensor = Sensor(motor)
-    STALL_TIME = 1000  # milliseconds
+    STALL_TIME = 100  # milliseconds
     closed_position = 0
     position = 0
     travelling = False
     interupt = False
+    homing_complete = False
 
     def __init__(self, trv):
         self.trv = trv
@@ -112,7 +122,7 @@ class Valve:
             return 1
 
     def stop_valve(self):
-        self.motor.stop_soft()
+        self.motor.stop_hard()
         self.valve_sensor.reset()
         return 0
 
@@ -128,13 +138,17 @@ class Valve:
 
     def home_valve(self):
         print('homing')
+        # self.trv.send_broadcast_digi_data('\nhoming\n')
         self.open_valve()
-        self.valve_moving(self.STALL_TIME)
+        self.valve_moving(3000)
         print('reached end of travel')
+        # self.trv.send_broadcast_digi_data('reached end of travel\n')
         self.valve_sensor.rev_counter = 0
+        print('rev counter: %s' % self.valve_sensor.rev_counter)
         time.sleep_ms(500)
         print('moving to opposite end of travel')
-        print('rev counter: %s\n' % self.valve_sensor.rev_counter)
+        # self.trv.send_broadcast_digi_data('moving to opposite end of travel\n')
+        # self.trv.send_broadcast_digi_data('rev counter: %s\n' % self.valve_sensor.rev_counter)
         self.close_valve()
         self.valve_moving(self.STALL_TIME)
         if self.valve_sensor.rev_counter > 200:
@@ -142,29 +156,48 @@ class Valve:
             self.valve_sensor.rev_counter -= 50
             self.trv.on_off_attributes['OnOff'] = False
             print('\nclosed position: %s' % self.closed_position)
+            # self.trv.send_broadcast_digi_data('\nclosed position: %s\n' % self.closed_position)
             print('rev counter: %s\n' % self.valve_sensor.rev_counter)
+            self.trv.send_broadcast_digi_data('rev counter: %s\n' % self.valve_sensor.rev_counter)
             self.position = self.closed_position
+            self.homing_complete = True
             self.goto_revs()
             # print('rev counter: %s\n' % self.valve_sensor.rev_counter)
         else:
             print('insufficient valve travel, revs: %i\n' % self.valve_sensor.rev_counter)
+            self.trv.send_broadcast_digi_data('insufficient valve travel, revs: %i\n' % self.valve_sensor.rev_counter)
 
     def valve_moving(self, max_period):
-        while (self.valve_sensor.period < max_period) & (not self.interupt):
+        timer = time.ticks_ms()
+        # while (self.valve_sensor.period < max_period) & (not self.interupt):
+        while (self.valve_sensor.period < (2*self.valve_sensor.peek_period)) & (not self.interupt):
             self.valve_sensor.read()
-            self.trv.process_msg()
+            if (time.ticks_diff(time.ticks_ms(), timer) > 3000) and (self.valve_sensor.rev_counter == 0):
+                print('motor fault')
+                self.trv.send_broadcast_digi_data('motor fault\n')
+                break
+            # self.trv.report_attribute(0x0000, 0x01)
+            # self.trv.process_msg()
             # if printing, baud rate needs to be above 9600 to capture readings a fast as they are being created
         self.stop_valve()
         self.interupt = False
 
     def goto_revs(self):
+        if not self.trv.connected_to_HA:
+            print('not yet synronised with HA')
+            return
+        if not self.homing_complete:
+            print('still need to home')
+            return
         if self.travelling:
             return
         if self.valve_sensor.rev_counter == self.position:
             print('valve already at desired position')
+            # self.trv.send_broadcast_digi_data('valve already at desired position\n')
         else:
             self.travelling = True
             print('travelling')
+            # self.trv.send_broadcast_digi_data('travelling\n')
             while (self.valve_sensor.rev_counter is not self.position) & (self.valve_sensor.period < self.STALL_TIME):
                 if self.valve_sensor.rev_counter > self.position:
                     self.open_valve()
@@ -175,9 +208,13 @@ class Valve:
             self.stop_valve()
             if self.valve_sensor.period > self.STALL_TIME:
                 print('valve stalling, period (ms): %i' % self.valve_sensor.period)
+                self.trv.send_broadcast_digi_data('valve stalling, period (ms): %i\n' % self.valve_sensor.period)
             else:
                 print('valve reached desired position')
+                # self.trv.send_broadcast_digi_data('valve reached desired position\n')
             print('rev counter: %s\n' % self.valve_sensor.rev_counter)
+            # self.trv.send_broadcast_digi_data('rev counter: %s\n' % self.valve_sensor.rev_counter)
+            self.trv.report_attribute(0x000d, 0x55)
         self.travelling = False
 
     def set_revs(self, rev_no):
@@ -185,4 +222,20 @@ class Valve:
 
     def get_period(self):
         return self.valve_sensor.period
+
+    def count_revs_to_endstop(self):
+        print('counting revs to end of travel')
+        self.trv.send_broadcast_digi_data('counting revs to end of travel\n')
+        self.open_valve()
+        self.valve_moving(3000)
+        counter = self.valve_sensor.rev_counter
+        print("rev count at endstop: %i" % counter)
+        self.trv.send_broadcast_digi_data("rev count at endstop: %i\n" % counter)
+        self.position = 0
+        self.goto_revs()
+        return counter
+
+    def set_stall_time(self, duration):
+        self.STALL_TIME = duration
+
         
