@@ -1,9 +1,8 @@
 from machine import ADC
 import struct
 import xbee
-from xbee import relay
 import time
-from sys import stdin, stdout
+from sys import stdout
 
 
 class TRV:
@@ -11,12 +10,9 @@ class TRV:
     valve = None
     data = [0]
     on_off_attributes = {
-        'OnOff': True
-    }
-
-    msg = {'sender': "", 'payload': "", 'cluster': 0, 'source_ep': 0, 'dest_ep': 0, 'profile': 0, 'address_low': 0,
+        'OnOff': True}
+    msg = {'sender': "", 'payload': bytearray(), 'cluster': 0, 'source_ep': 0, 'dest_ep': 0, 'profile': 0, 'address_low': 0,
            'address_high': 0}
-
     address = 0
     voltage_monitor = ADC('D2')
     awake_flag = 1
@@ -38,8 +34,6 @@ class TRV:
         self.setup_xbee()
         self.valve.stop_valve()
         self.get_network_address()
-        # while self.process_msg() is not None:
-        #    time.sleep_ms(500)  # to avoid starting homing before HA configuration has finished
         self.valve.home_valve()
         self.report_attributes()
 
@@ -52,7 +46,6 @@ class TRV:
         self.xbee.atcmd("AV", 2)  # analogue voltage reference VDD
 
     def report_attributes(self):
-        # print('reporting attributes\n')
         self.report_attribute(0x0000, 0x55)
         self.report_attribute(0x0001, 0x55)
         self.report_attribute(0x0002, 0x55)
@@ -75,10 +68,9 @@ class TRV:
         except OSError:
             print('OSError - could not send to coordinator')
 
-    @staticmethod
-    def send_broadcast_digi_data(string):
+    def send_broadcast_digi_data(self, string):
         try:
-            time.sleep_ms(50)
+            time.sleep_ms(200)
             xbee.transmit(xbee.ADDR_BROADCAST, string)
         except OSError:
             print('OSError - could not send digi data')
@@ -93,7 +85,7 @@ class TRV:
                           cluster=self.msg['cluster'], profile=self.msg['profile'], bcast_radius=0, tx_options=0)
             print('Transmit for printing: %s\n' % self.msg['payload'])
         except OSError:
-            print('OSError - could not send broadcast')
+            print('OSError - could not send for printing')
 
     def reference_voltage(self):
         av = self.xbee.atcmd("AV")
@@ -136,61 +128,41 @@ class TRV:
 
     def get_network_address(self):
         # wait for a connection to be established
-        print('\nConnecting...\n')
-        # self.send_broadcast_digi_data('connecting...\n')
+        print('\nconnecting...\n')
         if self.xbee.atcmd("AI") != 0:
             self.connected_to_HA = False
         while self.xbee.atcmd("AI") != 0:
-            time.sleep(2)
-            print('Waiting for a join window...')
-            # self.send_broadcast_digi_data('waiting for a join window...\n')
+            time.sleep(5)
+            print('waiting for a join window...')
         # Get the XBee's 16-bit network address
-        print('Connected...\n')
-        # self.send_broadcast_digi_data('connected...\n')
+        print('connected...\n')
         self.address = self.xbee.atcmd("MY")
-        print('Address: %04x' % self.address)
-        self.send_broadcast_digi_data('router-1 address: %04x\n' % self.address)
+        print('address: %04x' % self.address)
+        self.send_broadcast_digi_data('address: %04x\n' % self.address)
         self.msg['address_high'] = self.address >> 8
         self.msg['address_low'] = self.address & 0xff
-        print('Address High: %02x' % self.msg['address_high'])
-        print('Address Low: %02x' % self.msg['address_low'])
-        print("\nWaiting for data...\n")
+        print("device ready...\n")
         if not self.connected_to_HA:
             print('connecting to HA, wait one minute')
-            self.send_broadcast_digi_data('r1: connecting to HA, wait one minute')
             timer = time.ticks_ms()
             while time.ticks_diff(time.ticks_ms(), timer) < 60000:
                 self.process_msg()
             self.connected_to_HA = True
-        # self.send_broadcast_digi_data("router-1: ready\n")
-        # relay.send(relay.SERIAL, 'from microPython')
-        # stdout.write('That is a BINGO!')    nothing appears on the serial port
 
     def process_msg(self):
         # Check if the XBee has any message in the queue.
         received_msg = self.xbee.receive()
-        # while received_self.msg:
         if received_msg is not None:
-            # Get the sender's 64-bit address and payload from the received message.
-            # self.msg['sender'] = received_msg['sender_eui64']
-            # self.msg['payload'] = received_msg['payload']
             self.msg['cluster'] = received_msg['cluster']
             self.msg['dest_ep'] = received_msg['source_ep']
             self.msg['source_ep'] = received_msg['dest_ep']
             self.msg['profile'] = received_msg['profile']
-            print("\nData received from %s >> \nPayload: %s \nCluster: %04x \nSource ep: %02x \nDestination ep: %02x"
-                  "\nProfile: %04x\n" % (
+            print("\ndata received from %s >> \npayload: %s \ncluster: %04x \nsource ep: %02x \ndestination ep: %02x"
+                  "\nprofile: %04x\n" % (
                       ''.join('{:02x}'.format(x).upper() for x in received_msg['sender_eui64']), received_msg['payload'], received_msg['cluster'],
                       received_msg['source_ep'], received_msg['dest_ep'], received_msg['profile']))
-            # self.send_broadcast_digi_data("\ndata received from %s >>\n" % (''.join('{:02x}'.format(x).upper() for x in received_msg['sender_eui64'])))
-            self.send_broadcast_digi_data("r1: %s\n" % received_msg['payload'])
-            # self.send_broadcast_digi_data("cluster: %04x\nsource ep: %02x\n" % (received_msg['cluster'], received_msg['source_ep']))
-            # self.send_broadcast_digi_data("destination ep: %02x\nprofile: %04x\n" % (received_msg['dest_ep'], received_msg['profile']))
             self.data = list(received_msg['payload'])
-            print('processing message')
-            # self.send_broadcast_digi_data('\nprocessing message\n')
             print('sequence number: %02x' % self.data[1])
-            # self.send_broadcast_digi_data('sequence number: %02x\n' % self.data[1])
 
     # ---------------------------------------------------------------------------------------------------------------------
             # ZDO endpoint
@@ -198,8 +170,6 @@ class TRV:
                 # active endpoints request
                 if self.msg['cluster'] == 0x0005:
                     self.msg['payload'] = bytearray(
-                        # '{:c}\x00{:c}{:c}\x01\x55'.format(self.data[0], self.msg['address_low'], self.msg['address_high']))
-                        # '{:c}\x00{:c}{:c}\x02\x01\x55'.format(self.data[0], self.msg['address_low'], self.msg['address_high']))
                         '{:c}\x00{:c}{:c}\x03\x01\x02\x55'.format(self.data[0], self.msg['address_low'], self.msg['address_high']))
                     self.msg['cluster'] = 0x8005
                     self.send()
@@ -429,7 +399,7 @@ class TRV:
                     print('cluster: %04x not supported' % self.msg['cluster'])
 
     # ---------------------------------------------------------------------------------------------------------------------
-            # xbee endpoint
+            # xbee digi data endpoint
             elif received_msg['dest_ep'] == 0xe8:
                 if (len(self.data) >= 3) and (self.data[0] & 0b11 == 0b00):
                     cmd = chr(self.data[1]) + chr(self.data[2])
@@ -439,8 +409,7 @@ class TRV:
                         print(rsp)
                     else:
                         rsp = xbee.atcmd(cmd, self.data[3])
-                        # rsp = xbee.atcmd(cmd)
-                    self.send_broadcast_digi_data(bytearray(rsp.to_bytes(2, 'little')))
+                        print(rsp)
                 elif (len(self.data) >= 2) and (self.data[0] & 0b11 == 0b01):
                     print('TRV command')
                     if chr(self.data[1]) == 'P':
@@ -466,9 +435,7 @@ class TRV:
                         self.valve.motor.stop_soft()
                     if chr(self.data[1]) == 'G':
                         print('revs :{0}'.format(self.valve.valve_sensor.rev_counter))
-                        self.send_for_printing('hello')
-                        # self.send_broadcast_digi_data(bytearray(self.valve.valve_sensor.rev_counter.to_bytes(2, 'little')))
-                        # self.send_broadcast_digi_data('digi data broadcast')
+                        self.send_for_printing(bytearray(struct.pack("f", self.valve.valve_sensor.rev_counter)))
                     if chr(self.data[1]) == 'I':
                         print('interupt')
                         self.valve.interupt = True
@@ -476,9 +443,9 @@ class TRV:
                         if len(self.data) > 3:
                             self.valve.valve_sensor.set_threshold((self.data[2] << 8) + self.data[3])
                     if chr(self.data[1]) == 'L':
-                        self.send_broadcast_digi_data(bytearray(self.valve.count_revs_to_endstop().to_bytes(2, 'little')))
+                        print('L')
                     if chr(self.data[1]) == 'D':
-                        self.send_broadcast_digi_data(bytearray(self.valve.STALL_TIME.to_bytes(2, 'little')))
+                        print('D')
                 else:
                     print('invalid command')
 
@@ -486,6 +453,7 @@ class TRV:
             # endpoint for printing
             elif received_msg['dest_ep'] == 0xf0:  # decimal 240 (last endpoint)
                 print("%s" % received_msg['payload'])  # this does not go to the serial terminal it goes to the MicroPython REPL, XCTU has to be set to REPL mode [4] to display the output
+                stdout.write("[serial out] %s" % received_msg['payload'])  # nothing appears on the serial port
 
     # ---------------------------------------------------------------------------------------------------------------------
             # endpoint for diagnostics
@@ -662,7 +630,7 @@ class TRV:
                 present_value = bytearray(struct.pack("f", self.valve.valve_sensor.rev_counter))
                 # print(["0x%02x" % b for b in present_value])
                 self.msg['payload'] = bytearray(
-                    '\x18\x05\x0a'  # replaced the sequence number with \x02
+                    '\x18\x05\x0a'  # replaced the sequence number with \x05
                     # attribute ID (2 bytes), data type (1 byte), value (variable length)
                     # '\x1c\x00\x42\x04revs'  # Description (variable bytes)
                     # '\x51\x00\x10\x00'  # OutOfService (1 byte)
@@ -688,7 +656,7 @@ class TRV:
                 batt_voltage = bytearray(struct.pack("f", self.battery_voltage_mV()))
                 # print(["0x%02x" % b for b in present_value])
                 self.msg['payload'] = bytearray(
-                    '\x18\x07\x0a'  # replaced the sequence number with \x02
+                    '\x18\x07\x0a'  # replaced the sequence number with \x07
                     # attribute ID (2 bytes), data type (1 byte), value (variable length)
                     # '\x1c\x00\x42\x04revs'  # Description (variable bytes)
                     # '\x51\x00\x10\x00'  # OutOfService (1 byte)
@@ -698,18 +666,12 @@ class TRV:
                     ) + batt_voltage  # PresentValue (4 bytes)
                 self.send()
 
-            if cluster == 0x0000:
-                self.msg['cluster'] = 0x0000
-                self.msg['payload'] = bytearray(self.valve.valve_sensor.last_reading.to_bytes(2, 'little'))
-                self.send()
-
         elif ep == 0x02:
             if cluster == 0x000d:
                 self.msg['cluster'] = 0x000d
                 period = bytearray(struct.pack("f", self.valve.valve_sensor.period_filtered))
-                # print(["0x%02x" % b for b in present_value])
                 self.msg['payload'] = bytearray(
-                    '\x18\x07\x0a'  # replaced the sequence number with \x02
+                    '\x18\x08\x0a'
                     # attribute ID (2 bytes), data type (1 byte), value (variable length)
                     # '\x1c\x00\x42\x04revs'  # Description (variable bytes)
                     # '\x51\x00\x10\x00'  # OutOfService (1 byte)
@@ -717,9 +679,4 @@ class TRV:
                     '\x39'  # data type
                     # '\x6f\x00\x18\x00'  # StatusFlags (1 byte)
                     ) + period  # PresentValue (4 bytes)
-                self.send()
-
-            if cluster == 0x0000:
-                self.msg['cluster'] = 0x0000
-                self.msg['payload'] = bytearray(self.valve.valve_sensor.last_reading.to_bytes(2, 'little'))
                 self.send()
