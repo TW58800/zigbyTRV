@@ -5,13 +5,19 @@ import time
 from sys import stdout
 
 
+def log(info):
+    with open('trvlog.txt', 'w') as f:
+        print(info + '\n', file=f)
+
+
 class TRV:
     xbee = xbee
     valve = None
     data = [0]
     on_off_attributes = {
         'OnOff': True}
-    msg = {'sender': "", 'payload': bytearray(), 'cluster': 0, 'source_ep': 0, 'dest_ep': 0, 'profile': 0, 'address_low': 0,
+    msg = {'sender': "", 'payload': bytearray(), 'cluster': 0, 'source_ep': 0, 'dest_ep': 0, 'profile': 0,
+           'address_low': 0,
            'address_high': 0}
     address = 0
     voltage_monitor = ADC('D2')
@@ -62,7 +68,8 @@ class TRV:
 
     def send(self):
         try:
-            xbee.transmit(xbee.ADDR_COORDINATOR, self.msg['payload'], source_ep=self.msg['source_ep'], dest_ep=self.msg['dest_ep'],
+            xbee.transmit(xbee.ADDR_COORDINATOR, self.msg['payload'], source_ep=self.msg['source_ep'],
+                          dest_ep=self.msg['dest_ep'],
                           cluster=self.msg['cluster'], profile=self.msg['profile'], bcast_radius=0, tx_options=0)
             print('Transmit to coordinator: %s\n' % self.msg['payload'])
         except OSError:
@@ -81,7 +88,8 @@ class TRV:
         self.msg['dest_ep'] = 0xf0
         self.msg['payload'] = info
         try:
-            xbee.transmit(xbee.ADDR_BROADCAST, self.msg['payload'], source_ep=self.msg['source_ep'], dest_ep=self.msg['dest_ep'],
+            xbee.transmit(xbee.ADDR_BROADCAST, self.msg['payload'], source_ep=self.msg['source_ep'],
+                          dest_ep=self.msg['dest_ep'],
                           cluster=self.msg['cluster'], profile=self.msg['profile'], bcast_radius=0, tx_options=0)
             print('Transmit for printing: %s\n' % self.msg['payload'])
         except OSError:
@@ -94,7 +102,8 @@ class TRV:
         elif av == 1:
             return 2500
         else:
-            return self.xbee.atcmd("%V")  # using a Voltage step-up 2.4V to 3.3V and measuring the AA battery voltage on D2
+            return self.xbee.atcmd(
+                "%V")  # using a Voltage step-up 2.4V to 3.3V and measuring the AA battery voltage on D2
             # return 3300  # using the line Voltage as reference, as a fully charged AA battery starts at 1.5V, so a 2.5 ref would be to low with two AA batteries
 
     def battery_voltage_mV(self):
@@ -112,19 +121,20 @@ class TRV:
 
     def battery_percentage_remaining(self):
         voltage_as_percentage = int(
-            (self.battery_voltage_mV() - 2000) * 0.3)  # 2.4 volts is 63%  HA expects a value between 0 and 200 (0.5% resolution)
+            (
+                        self.battery_voltage_mV() - 2000) * 0.3)  # 2.4 volts is 63%  HA expects a value between 0 and 200 (0.5% resolution)
         if voltage_as_percentage > 255:
             voltage_as_percentage = 255
         if voltage_as_percentage < 0:
             voltage_as_percentage = 0
-        print('voltage: {:04.1f}%'.format(voltage_as_percentage/2))
+        # print('voltage: {:04.1f}%'.format(voltage_as_percentage / 2))
         return voltage_as_percentage
 
     def get_temperature(self):
         tp = self.xbee.atcmd('TP')
         if tp > 0x7FFF:
             tp = tp - 0x10000
-        return tp*100  # HA measures temperature in 100ths of a degree
+        return tp * 100  # HA measures temperature in 100ths of a degree
 
     def get_network_address(self):
         # wait for a connection to be established
@@ -138,6 +148,7 @@ class TRV:
         print('connected...\n')
         self.address = self.xbee.atcmd("MY")
         print('address: %04x' % self.address)
+        log('%04i: address: %04x' % (time.ticks_ms(), self.address))
         self.send_broadcast_digi_data('address: %04x\n' % self.address)
         self.msg['address_high'] = self.address >> 8
         self.msg['address_low'] = self.address & 0xff
@@ -159,18 +170,20 @@ class TRV:
             self.msg['profile'] = received_msg['profile']
             print("\ndata received from %s >> \npayload: %s \ncluster: %04x \nsource ep: %02x \ndestination ep: %02x"
                   "\nprofile: %04x\n" % (
-                      ''.join('{:02x}'.format(x).upper() for x in received_msg['sender_eui64']), received_msg['payload'], received_msg['cluster'],
+                      ''.join('{:02x}'.format(x).upper() for x in received_msg['sender_eui64']),
+                      received_msg['payload'], received_msg['cluster'],
                       received_msg['source_ep'], received_msg['dest_ep'], received_msg['profile']))
             self.data = list(received_msg['payload'])
             print('sequence number: %02x' % self.data[1])
 
-    # ---------------------------------------------------------------------------------------------------------------------
+            # ---------------------------------------------------------------------------------------------------------------------
             # ZDO endpoint
             if received_msg['dest_ep'] == 0x0000:
                 # active endpoints request
                 if self.msg['cluster'] == 0x0005:
                     self.msg['payload'] = bytearray(
-                        '{:c}\x00{:c}{:c}\x03\x01\x02\x55'.format(self.data[0], self.msg['address_low'], self.msg['address_high']))
+                        '{:c}\x00{:c}{:c}\x03\x01\x02\x55'.format(self.data[0], self.msg['address_low'],
+                                                                  self.msg['address_high']))
                     self.msg['cluster'] = 0x8005
                     self.send()
                 # simple descriptor request
@@ -227,7 +240,7 @@ class TRV:
                 else:
                     print('ZDO cluster %04x not supported' % self.msg['cluster'])
                 print('Sequence number: %02x\n\n' % self.data[0])
-    # ---------------------------------------------------------------------------------------------------------------------
+            # ---------------------------------------------------------------------------------------------------------------------
             # endpoint for Tim's radiator valve controller device
             elif received_msg['dest_ep'] == 0x55:
                 # 'basic' cluster
@@ -260,7 +273,8 @@ class TRV:
                             self.msg['payload'] = bytearray(
                                 '\x18{:c}\x01'  # header, sequence number, command identifier
                                 # attribute ID (2 bytes), status (1 byte), data type (1 byte), value (variable length)
-                                '\x20\x00\x00\x20'.format(self.data[1])) + batt_voltage + bytearray(  # battery voltage (1 byte - uint8)
+                                '\x20\x00\x00\x20'.format(self.data[1])) + batt_voltage + bytearray(
+                                # battery voltage (1 byte - uint8)
                                 '\x21\x00\x00\x20') + batt_percentage_remaining + bytearray(
                                 '\x31\x00\x00\x30\x03')  # battery size: AA
                             if self.data[3] == 0x21:  # attribute identifier: battery percentage
@@ -275,7 +289,8 @@ class TRV:
                             # just responds with success, even though I haven't set up any reporting mechanism!
                             self.msg['payload'] = bytearray(
                                 '\x18{:c}\x07'  # header, sequence number, command identifier
-                                '\x00'.format(self.data[1]))  # only sending a single ZCL payload byte (0x00) to indicate that all attributes were successfully configured
+                                '\x00'.format(self.data[
+                                                  1]))  # only sending a single ZCL payload byte (0x00) to indicate that all attributes were successfully configured
                             self.send()
                         else:
                             print('general command : %04x not supported' % self.data[2])
@@ -299,7 +314,8 @@ class TRV:
                             # just responds with success, even though I haven't set up any reporting mechanism!
                             self.msg['payload'] = bytearray(
                                 '\x18{:c}\x07'  # header, sequence number, command identifier
-                                '\x00'.format(self.data[1]))  # only sending a single ZCL payload byte (0x00) to indicate that all attributes were successfully configured
+                                '\x00'.format(self.data[
+                                                  1]))  # only sending a single ZCL payload byte (0x00) to indicate that all attributes were successfully configured
                             self.send()
                         else:
                             print('general command : %04x not supported' % self.data[2])
@@ -340,7 +356,8 @@ class TRV:
                         # after acting on a cluster specific command send a 'report attributes' '0x0a' message
                         self.msg['payload'] = bytearray(
                             '\x18{:c}\x0a'  # header, sequence number, command identifier
-                            '\x00\x00\x10{:c}'.format(self.data[1], self.on_off_attributes['OnOff']))  # attribute identifier (2 bytes), data type (1 byte), value (1 byte)
+                            '\x00\x00\x10{:c}'.format(self.data[1], self.on_off_attributes[
+                                'OnOff']))  # attribute identifier (2 bytes), data type (1 byte), value (1 byte)
                         self.send()
                         self.valve.demand()
                 # 'analogue output' cluster
@@ -356,7 +373,8 @@ class TRV:
                                 # attribute ID (2 bytes), status (1 byte), data type (1 byte), value (variable length)
                                 '\x1c\x00\x00\x42\x11valve_revolutions'  # Description (variable bytes)
                                 '\x51\x00\x00\x10\x00'  # OutOfService (1 byte)
-                                '\x55\x00\x00\x39'.format(self.data[1])) + present_value + bytearray(  # PresentValue (4 bytes)
+                                '\x55\x00\x00\x39'.format(self.data[1])) + present_value + bytearray(
+                                # PresentValue (4 bytes)
                                 '\x6f\x00\x00\x18\x00')  # StatusFlags (1 byte)
                             self.send()
                         # configure reporting '0x06'
@@ -365,7 +383,8 @@ class TRV:
                             # just responds with success, even though I haven't set up any reporting mechanism!
                             self.msg['payload'] = bytearray(
                                 '\x18{:c}\x07'  # header, sequence number, command identifier
-                                '\x00'.format(self.data[1]))  # only sending a single ZCL payload byte (0x00) to indicate that all attributes were successfully configured
+                                '\x00'.format(self.data[
+                                                  1]))  # only sending a single ZCL payload byte (0x00) to indicate that all attributes were successfully configured
                             self.send()
                         else:
                             print('general command : %04x not supported' % self.data[2])
@@ -382,7 +401,8 @@ class TRV:
                                 # attribute ID (2 bytes), status (1 byte), data type (1 byte), value (variable length)
                                 '\x1c\x00\x00\x42\x05awake'  # Description (variable bytes)
                                 '\x51\x00\x00\x10\x00'  # OutOfService (1 byte)
-                                '\x55\x00\x00\x10'.format(self.data[1])) + present_value + bytearray(  # PresentValue (1 byte)
+                                '\x55\x00\x00\x10'.format(self.data[1])) + present_value + bytearray(
+                                # PresentValue (1 byte)
                                 '\x6f\x00\x00\x18\x00')  # StatusFlags (1 byte)
                             self.send()
                         # configure reporting '0x06'
@@ -391,14 +411,15 @@ class TRV:
                             # just responds with success, even though I haven't set up any reporting mechanism!
                             self.msg['payload'] = bytearray(
                                 '\x18{:c}\x07'  # header, sequence number, command identifier
-                                '\x00'.format(self.data[1]))  # only sending a single ZCL payload byte (0x00) to indicate that all attributes were successfully configured
+                                '\x00'.format(self.data[
+                                                  1]))  # only sending a single ZCL payload byte (0x00) to indicate that all attributes were successfully configured
                             self.send()
                         else:
                             print('general command : %04x not supported' % self.data[2])
                 else:
                     print('cluster: %04x not supported' % self.msg['cluster'])
 
-    # ---------------------------------------------------------------------------------------------------------------------
+            # ---------------------------------------------------------------------------------------------------------------------
             # xbee digi data endpoint
             elif received_msg['dest_ep'] == 0xe8:
                 if (len(self.data) >= 3) and (self.data[0] & 0b11 == 0b00):
@@ -449,13 +470,14 @@ class TRV:
                 else:
                     print('invalid command')
 
-    # ---------------------------------------------------------------------------------------------------------------------
+            # ---------------------------------------------------------------------------------------------------------------------
             # endpoint for printing
             elif received_msg['dest_ep'] == 0xf0:  # decimal 240 (last endpoint)
-                print("%s" % received_msg['payload'])  # this does not go to the serial terminal it goes to the MicroPython REPL, XCTU has to be set to REPL mode [4] to display the output
+                print("%s" % received_msg[
+                    'payload'])  # this does not go to the serial terminal it goes to the MicroPython REPL, XCTU has to be set to REPL mode [4] to display the output
                 stdout.write("[serial out] %s" % received_msg['payload'])  # nothing appears on the serial port
 
-    # ---------------------------------------------------------------------------------------------------------------------
+            # ---------------------------------------------------------------------------------------------------------------------
             # endpoint for diagnostics
             elif received_msg['dest_ep'] == 0x01:
                 # 'analogue output' cluster
@@ -471,7 +493,8 @@ class TRV:
                                 # attribute ID (2 bytes), status (1 byte), data type (1 byte), value (variable length)
                                 '\x1c\x00\x00\x42\x0fbattery_voltage'  # Description (variable bytes)
                                 '\x51\x00\x00\x10\x00'  # OutOfService (1 byte)
-                                '\x55\x00\x00\x39'.format(self.data[1])) + batt_voltage + bytearray(  # PresentValue (4 bytes)
+                                '\x55\x00\x00\x39'.format(self.data[1])) + batt_voltage + bytearray(
+                                # PresentValue (4 bytes)
                                 '\x6f\x00\x00\x18\x00')  # StatusFlags (1 byte)
                             self.send()
                         # configure reporting '0x06'
@@ -480,7 +503,8 @@ class TRV:
                             # just responds with success, even though I haven't set up any reporting mechanism!
                             self.msg['payload'] = bytearray(
                                 '\x18{:c}\x07'  # header, sequence number, command identifier
-                                '\x00'.format(self.data[1]))  # only sending a single ZCL payload byte (0x00) to indicate that all attributes were successfully configured
+                                '\x00'.format(self.data[
+                                                  1]))  # only sending a single ZCL payload byte (0x00) to indicate that all attributes were successfully configured
                             self.send()
                         else:
                             print('general command : %04x not supported' % self.data[2])
@@ -497,7 +521,8 @@ class TRV:
                                 # attribute ID (2 bytes), status (1 byte), data type (1 byte), value (variable length)
                                 '\x1c\x00\x00\x42\x05awake'  # Description (variable bytes)
                                 '\x51\x00\x00\x10\x00'  # OutOfService (1 byte)
-                                '\x55\x00\x00\x10'.format(self.data[1])) + present_value + bytearray(  # PresentValue (1 byte)
+                                '\x55\x00\x00\x10'.format(self.data[1])) + present_value + bytearray(
+                                # PresentValue (1 byte)
                                 '\x6f\x00\x00\x18\x00')  # StatusFlags (1 byte)
                             self.send()
                         # configure reporting '0x06'
@@ -506,7 +531,8 @@ class TRV:
                             # just responds with success, even though I haven't set up any reporting mechanism!
                             self.msg['payload'] = bytearray(
                                 '\x18{:c}\x07'  # header, sequence number, command identifier
-                                '\x00'.format(self.data[1]))  # only sending a single ZCL payload byte (0x00) to indicate that all attributes were successfully configured
+                                '\x00'.format(self.data[
+                                                  1]))  # only sending a single ZCL payload byte (0x00) to indicate that all attributes were successfully configured
                             self.send()
                         else:
                             print('general command : %04x not supported' % self.data[2])
@@ -515,7 +541,7 @@ class TRV:
                 else:
                     print('cluster: %04x not supported' % self.msg['cluster'])
 
-    # ---------------------------------------------------------------------------------------------------------------------
+            # ---------------------------------------------------------------------------------------------------------------------
             # endpoint for valve period
             elif received_msg['dest_ep'] == 0x02:
                 # 'analogue output' cluster
@@ -540,7 +566,8 @@ class TRV:
                             # just responds with success, even though I haven't set up any reporting mechanism!
                             self.msg['payload'] = bytearray(
                                 '\x18{:c}\x07'  # header, sequence number, command identifier
-                                '\x00'.format(self.data[1]))  # only sending a single ZCL payload byte (0x00) to indicate that all attributes were successfully configured
+                                '\x00'.format(self.data[
+                                                  1]))  # only sending a single ZCL payload byte (0x00) to indicate that all attributes were successfully configured
                             self.send()
                         else:
                             print('general command : %04x not supported' % self.data[2])
@@ -557,7 +584,8 @@ class TRV:
                                 # attribute ID (2 bytes), status (1 byte), data type (1 byte), value (variable length)
                                 '\x1c\x00\x00\x42\x05awake'  # Description (variable bytes)
                                 '\x51\x00\x00\x10\x00'  # OutOfService (1 byte)
-                                '\x55\x00\x00\x10'.format(self.data[1])) + present_value + bytearray(  # PresentValue (1 byte)
+                                '\x55\x00\x00\x10'.format(self.data[1])) + present_value + bytearray(
+                                # PresentValue (1 byte)
                                 '\x6f\x00\x00\x18\x00')  # StatusFlags (1 byte)
                             self.send()
                         # configure reporting '0x06'
@@ -566,7 +594,8 @@ class TRV:
                             # just responds with success, even though I haven't set up any reporting mechanism!
                             self.msg['payload'] = bytearray(
                                 '\x18{:c}\x07'  # header, sequence number, command identifier
-                                '\x00'.format(self.data[1]))  # only sending a single ZCL payload byte (0x00) to indicate that all attributes were successfully configured
+                                '\x00'.format(self.data[
+                                                  1]))  # only sending a single ZCL payload byte (0x00) to indicate that all attributes were successfully configured
                             self.send()
                         else:
                             print('general command : %04x not supported' % self.data[2])
@@ -614,7 +643,7 @@ class TRV:
                     '\x18\x03\x0a'
                     '\x00\x00'
                     '\x29'
-                    ) + device_temperature
+                ) + device_temperature
                 self.send()
 
             elif cluster == 0x0006:
@@ -637,7 +666,7 @@ class TRV:
                     '\x55\x00'  # attribute identifier
                     '\x39'  # data type
                     # '\x6f\x00\x18\x00'  # StatusFlags (1 byte)
-                    ) + present_value  # PresentValue (4 bytes)
+                ) + present_value  # PresentValue (4 bytes)
                 self.send()
 
             elif cluster == 0x000f:
@@ -647,7 +676,7 @@ class TRV:
                     '\x18\x06\x0a'  # header, sequence number, command identifier
                     '\x55\x00'
                     '\x10'
-                    ) + binary_sensor
+                ) + binary_sensor
                 self.send()
 
         elif ep == 0x01:
@@ -663,7 +692,7 @@ class TRV:
                     '\x55\x00'  # attribute identifier
                     '\x39'  # data type
                     # '\x6f\x00\x18\x00'  # StatusFlags (1 byte)
-                    ) + batt_voltage  # PresentValue (4 bytes)
+                ) + batt_voltage  # PresentValue (4 bytes)
                 self.send()
 
         elif ep == 0x02:
@@ -678,5 +707,5 @@ class TRV:
                     '\x55\x00'  # attribute identifier
                     '\x39'  # data type
                     # '\x6f\x00\x18\x00'  # StatusFlags (1 byte)
-                    ) + period  # PresentValue (4 bytes)
+                ) + period  # PresentValue (4 bytes)
                 self.send()
