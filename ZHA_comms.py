@@ -3,11 +3,7 @@ import struct
 import xbee
 import time
 from sys import stdout
-
-
-def log(info):
-    with open('trvlog.txt', 'w') as f:
-        print(info + '\n', file=f)
+import uos
 
 
 class TRV:
@@ -23,6 +19,18 @@ class TRV:
     voltage_monitor = ADC('D2')
     awake_flag = 1
     connected_to_HA = True
+    try:
+        uos.remove('trvlog.txt')
+    Except():
+        print()
+    log_file = open('trvlog.txt', 'a')
+
+    def log(self, info):
+        try:
+            # with open('trvlog.txt', 'a') as f:
+            print(info + '\n', file=self.log_file)
+        except OSError:
+            print('file error')
 
     def run(self):
         counter = time.ticks_ms()
@@ -138,21 +146,21 @@ class TRV:
 
     def get_network_address(self):
         # wait for a connection to be established
-        print('\nconnecting...\n')
+        print('\nconnecting...')
         if self.xbee.atcmd("AI") != 0:
             self.connected_to_HA = False
         while self.xbee.atcmd("AI") != 0:
             time.sleep(5)
             print('waiting for a join window...')
         # Get the XBee's 16-bit network address
-        print('connected...\n')
+        print('connected...')
         self.address = self.xbee.atcmd("MY")
         print('address: %04x' % self.address)
-        log('%04i: address: %04x' % (time.ticks_ms(), self.address))
+        self.log('%04i: address: %04x' % (time.ticks_ms(), self.address))
         self.send_broadcast_digi_data('address: %04x\n' % self.address)
         self.msg['address_high'] = self.address >> 8
         self.msg['address_low'] = self.address & 0xff
-        print("device ready...\n")
+        print("device ready...")
         if not self.connected_to_HA:
             print('connecting to HA, wait one minute')
             timer = time.ticks_ms()
@@ -239,7 +247,7 @@ class TRV:
                     self.send()
                 else:
                     print('ZDO cluster %04x not supported' % self.msg['cluster'])
-                print('Sequence number: %02x\n\n' % self.data[0])
+
             # ---------------------------------------------------------------------------------------------------------------------
             # endpoint for Tim's radiator valve controller device
             elif received_msg['dest_ep'] == 0x55:
@@ -632,6 +640,7 @@ class TRV:
                     '\x20\x00\x20') + batt_voltage + bytearray(  # battery voltage (1 byte - uint8)
                     '\x21\x00\x20') + batt_percentage_remaining  # battery % remaining (1 byte - uint8)
                 self.send()
+                self.log('%08i: batt_voltage: %04imV' % (time.ticks_ms(), self.battery_voltage_mV()))
 
             elif cluster == 0x0002:
                 self.msg['cluster'] = 0x0002
