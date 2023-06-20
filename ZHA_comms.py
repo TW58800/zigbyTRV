@@ -3,7 +3,10 @@ import struct
 import xbee
 import time
 from sys import stdout
+import uio
 import uos
+
+LOG_FILE = "ships_log.log"
 
 
 class TRV:
@@ -19,20 +22,24 @@ class TRV:
     voltage_monitor = ADC('D2')
     awake_flag = 1
     connected_to_HA = True
-    try:
-        uos.remove('trvlog.txt')
-    Except():
-        print()
-    log_file = open('trvlog.txt', 'a')
 
-    def log(self, info):
+    def initialise(self):
+        # creating log file, if it exists, remove it.
         try:
-            # with open('trvlog.txt', 'a') as f:
-            print(info + '\n', file=self.log_file)
+            log = uio.open(LOG_FILE)
+            log.close()
+            uos.remove(LOG_FILE)
         except OSError:
-            print('file error')
+            # Do nothing, the file does not exist.
+            pass
+        self.setup_xbee()
+        self.valve.stop_valve()
+        self.get_network_address()
+        self.valve.home_valve()
+        self.report_attributes()
 
     def run(self):
+        self.log("trv program running")
         counter = time.ticks_ms()
         while True:
             if self.xbee.atcmd("AI") != 0:
@@ -44,12 +51,13 @@ class TRV:
                 counter = time.ticks_ms()
                 self.report_attributes()
 
-    def initialise(self):
-        self.setup_xbee()
-        self.valve.stop_valve()
-        self.get_network_address()
-        self.valve.home_valve()
-        self.report_attributes()
+    @staticmethod
+    def log(info):
+        # Create and open the log file in the XBee's file system.
+        with uio.open(LOG_FILE, mode="a") as logger:
+            # Write 'info' in the log file.
+            dummy = logger.write("info: %s\n" % info)
+        return dummy
 
     def setup_xbee(self):
         self.xbee.atcmd("SM", 6)
@@ -475,6 +483,16 @@ class TRV:
                         print('L')
                     if chr(self.data[1]) == 'D':
                         print('D')
+                    if chr(self.data[1]) == 'X':
+                        # Open the log file to read its contents
+                        with uio.open(LOG_FILE) as logger:
+                            while True:
+                                line = logger.readline(74)
+                                if not line:
+                                    break
+                                print(line, end="")
+                                self.send_broadcast_digi_data(line)
+                        print("\nLog file read")
                 else:
                     print('invalid command')
 
