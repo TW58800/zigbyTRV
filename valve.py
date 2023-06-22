@@ -151,14 +151,14 @@ class Valve:
             self.closed_position = self.valve_sensor.rev_counter - 100
             self.valve_sensor.rev_counter -= 50
             self.trv.on_off_attributes['OnOff'] = False
-            print('\nclosed position: %s' % self.closed_position)
-            print('rev counter: %s\n' % self.valve_sensor.rev_counter)
+            print('closed position: %s' % self.closed_position)
+            print('rev counter: %s' % self.valve_sensor.rev_counter)
             self.position = self.closed_position
             self.homing_complete = True
             self.goto_revs()
             # print('rev counter: %s\n' % self.valve_sensor.rev_counter)
         else:
-            print('insufficient valve travel, revs: %i\n' % self.valve_sensor.rev_counter)
+            print('insufficient valve travel, revs: %i' % self.valve_sensor.rev_counter)
 
     def valve_moving(self, max_period):
         timer = time.ticks_ms()

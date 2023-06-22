@@ -22,6 +22,7 @@ class TRV:
     voltage_monitor = ADC('D2')
     awake_flag = 1
     connected_to_HA = True
+    logger = None
 
     def initialise(self):
         # creating log file, if it exists, remove it.
@@ -32,6 +33,7 @@ class TRV:
         except OSError:
             # Do nothing, the file does not exist.
             pass
+        self.logger = uio.open(LOG_FILE, mode="a")
         self.setup_xbee()
         self.valve.stop_valve()
         self.get_network_address()
@@ -51,13 +53,8 @@ class TRV:
                 counter = time.ticks_ms()
                 self.report_attributes()
 
-    @staticmethod
-    def log(info):
-        # Create and open the log file in the XBee's file system.
-        with uio.open(LOG_FILE, mode="a") as logger:
-            # Write 'info' in the log file.
-            dummy = logger.write("info: %s\n" % info)
-        return dummy
+    def log(self, info):
+        return self.logger.write("[%04x %08i] %s\n" % (self.address, time.ticks_ms(), info))
 
     def setup_xbee(self):
         self.xbee.atcmd("SM", 6)
@@ -87,7 +84,7 @@ class TRV:
             xbee.transmit(xbee.ADDR_COORDINATOR, self.msg['payload'], source_ep=self.msg['source_ep'],
                           dest_ep=self.msg['dest_ep'],
                           cluster=self.msg['cluster'], profile=self.msg['profile'], bcast_radius=0, tx_options=0)
-            print('Transmit to coordinator: %s\n' % self.msg['payload'])
+            print('Transmit to coordinator: %s' % self.msg['payload'])
         except OSError:
             print('OSError - could not send to coordinator')
 
@@ -107,7 +104,7 @@ class TRV:
             xbee.transmit(xbee.ADDR_BROADCAST, self.msg['payload'], source_ep=self.msg['source_ep'],
                           dest_ep=self.msg['dest_ep'],
                           cluster=self.msg['cluster'], profile=self.msg['profile'], bcast_radius=0, tx_options=0)
-            print('Transmit for printing: %s\n' % self.msg['payload'])
+            print('Transmit for printing: %s' % self.msg['payload'])
         except OSError:
             print('OSError - could not send for printing')
 
@@ -164,7 +161,7 @@ class TRV:
         print('connected...')
         self.address = self.xbee.atcmd("MY")
         print('address: %04x' % self.address)
-        self.log('%04i: address: %04x' % (time.ticks_ms(), self.address))
+        self.log('address: %04x' % self.address)
         self.send_broadcast_digi_data('address: %04x\n' % self.address)
         self.msg['address_high'] = self.address >> 8
         self.msg['address_low'] = self.address & 0xff
@@ -184,8 +181,8 @@ class TRV:
             self.msg['dest_ep'] = received_msg['source_ep']
             self.msg['source_ep'] = received_msg['dest_ep']
             self.msg['profile'] = received_msg['profile']
-            print("\ndata received from %s >> \npayload: %s \ncluster: %04x \nsource ep: %02x \ndestination ep: %02x"
-                  "\nprofile: %04x\n" % (
+            print("data received from %s >> \npayload: %s \ncluster: %04x \nsource ep: %02x \ndestination ep: %02x"
+                  "\nprofile: %04x" % (
                       ''.join('{:02x}'.format(x).upper() for x in received_msg['sender_eui64']),
                       received_msg['payload'], received_msg['cluster'],
                       received_msg['source_ep'], received_msg['dest_ep'], received_msg['profile']))
@@ -484,7 +481,7 @@ class TRV:
                     if chr(self.data[1]) == 'D':
                         print('D')
                     if chr(self.data[1]) == 'X':
-                        # Open the log file to read its contents
+                        self.logger.close()
                         with uio.open(LOG_FILE) as logger:
                             while True:
                                 line = logger.readline(74)
@@ -492,7 +489,10 @@ class TRV:
                                     break
                                 print(line, end="")
                                 self.send_broadcast_digi_data(line)
-                        print("\nLog file read")
+                        print("log file read")
+                        uos.remove(LOG_FILE)
+                        self.logger = uio.open(LOG_FILE, mode="a")
+                        self.log('log file created')
                 else:
                     print('invalid command')
 
@@ -658,7 +658,7 @@ class TRV:
                     '\x20\x00\x20') + batt_voltage + bytearray(  # battery voltage (1 byte - uint8)
                     '\x21\x00\x20') + batt_percentage_remaining  # battery % remaining (1 byte - uint8)
                 self.send()
-                self.log('%08i: batt_voltage: %04imV' % (time.ticks_ms(), self.battery_voltage_mV()))
+                self.log('batt_voltage: %04imV' % self.battery_voltage_mV())
 
             elif cluster == 0x0002:
                 self.msg['cluster'] = 0x0002
