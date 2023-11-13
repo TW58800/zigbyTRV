@@ -23,6 +23,7 @@ class TRV:
     awake_flag = 1
     connected_to_HA = True
     logger = None
+    processing_message = False
 
     def initialise(self):
         # creating log file, if it exists, remove it.
@@ -37,6 +38,7 @@ class TRV:
         self.setup_xbee()
         self.valve.stop_valve()
         self.get_network_address()
+        time.sleep(5)  # to allow time for coordinator to send messages
         self.valve.home_valve()
         self.report_attributes()
 
@@ -52,6 +54,13 @@ class TRV:
             if time.ticks_diff(time.ticks_ms(), counter) > 180000:
                 counter = time.ticks_ms()
                 self.report_attributes()
+            if time.ticks_diff(time.ticks_ms(), counter) // 60 == 1:
+                # print("sleeping for 50 seconds\n")
+                # self.awake_flag = 0
+                self.report_attribute(0x000f, 0x55)
+                # self.xbee.XBee().sleep_now(50000, pin_wake=True)
+                # self.awake_flag = 1
+                # self.report_attributes(0x000f)
 
     def log(self, info):
         return self.logger.write("[%04x %08i] %s\n" % (self.address, time.ticks_ms(), info))
@@ -72,19 +81,17 @@ class TRV:
         self.report_attribute(0x000d, 0x55)
         self.report_attribute(0x000d, 0x01)
         self.report_attribute(0x000d, 0x02)
-        # print("sleeping for 60 seconds\n")
-        # self.awake_flag = 0
-        self.report_attribute(0x000f, 0x55)
-        # self.xbee.XBee().sleep_now(60000, pin_wake=True)
-        # self.awake_flag = 1
-        # self.report_attributes(0x000f)
 
     def send(self):
         try:
             xbee.transmit(xbee.ADDR_COORDINATOR, self.msg['payload'], source_ep=self.msg['source_ep'],
                           dest_ep=self.msg['dest_ep'],
                           cluster=self.msg['cluster'], profile=self.msg['profile'], bcast_radius=0, tx_options=0)
-            print('Transmit to coordinator: %s' % self.msg['payload'])
+            self.data = list(self.msg['payload'])
+            if self.msg['dest_ep'] == 0x0000:
+                print('\ntransmit to coordinator [%02x]: %s' % (self.data[0], self.msg['payload']))
+            else:
+                print('\ntransmit to coordinator [%02x]: %s' % (self.data[1], self.msg['payload']))
         except OSError:
             print('OSError - could not send to coordinator')
 
@@ -104,7 +111,7 @@ class TRV:
             xbee.transmit(xbee.ADDR_BROADCAST, self.msg['payload'], source_ep=self.msg['source_ep'],
                           dest_ep=self.msg['dest_ep'],
                           cluster=self.msg['cluster'], profile=self.msg['profile'], bcast_radius=0, tx_options=0)
-            print('Transmit for printing: %s' % self.msg['payload'])
+            print('transmit for printing [%02x]: %s' % (self.data[1], self.msg['payload']))
         except OSError:
             print('OSError - could not send for printing')
 
@@ -177,17 +184,21 @@ class TRV:
         # Check if the XBee has any message in the queue.
         received_msg = self.xbee.receive()
         if received_msg is not None:
+            self.processing_message = True
             self.msg['cluster'] = received_msg['cluster']
             self.msg['dest_ep'] = received_msg['source_ep']
             self.msg['source_ep'] = received_msg['dest_ep']
             self.msg['profile'] = received_msg['profile']
-            print("data received from %s >> \npayload: %s \ncluster: %04x \nsource ep: %02x \ndestination ep: %02x"
+            print("\ndata received from %s >> \npayload: %s \ncluster: %04x \nsource ep: %02x \ndestination ep: %02x"
                   "\nprofile: %04x" % (
                       ''.join('{:02x}'.format(x).upper() for x in received_msg['sender_eui64']),
                       received_msg['payload'], received_msg['cluster'],
                       received_msg['source_ep'], received_msg['dest_ep'], received_msg['profile']))
             self.data = list(received_msg['payload'])
-            print('sequence number: %02x' % self.data[1])
+            if received_msg['dest_ep'] == 0x0000:
+                print('sequence number: %02x' % self.data[0])
+            else:
+                print('sequence number: %02x' % self.data[1])
 
             # ---------------------------------------------------------------------------------------------------------------------
             # ZDO endpoint
@@ -250,6 +261,9 @@ class TRV:
                     self.msg['payload'] = bytearray('{:c}\x00'.format(self.data[0]))
                     self.msg['cluster'] = 0x8036
                     self.send()
+                # coordinator's 16bit IEEE address
+                elif self.msg['cluster'] == 0x8001:
+                    print("coordinator's 16 bit IEEE address: %s" % ''.join('{:02x}'.format(x).upper() for x in received_msg['payload'][9:1:-1]))
                 else:
                     print('ZDO cluster %04x not supported' % self.msg['cluster'])
 
@@ -357,20 +371,20 @@ class TRV:
                             print('general command : %04x not supported' % self.data[2])
                     # cluster specific commands
                     elif self.data[0] & 0b11 == 0b01:
+                        self.msg['payload'] = bytearray(
+                            '\x18{:c}\x0b'.format(self.data[1]))  # header, sequence number, command identifier
                         # off command
                         if self.data[2] == 0x00:
                             self.on_off_attributes['OnOff'] = False
+                            self.msg['payload'].extend('\x00\x00')  # command identifier (1 byte), status (1 byte)
                         # on command
                         elif self.data[2] == 0x01:
                             self.on_off_attributes['OnOff'] = True
+                            self.msg['payload'].extend('\x01\x00')  # command identifier (1 byte), status (1 byte)
                         # toggle command
                         elif self.data[2] == 0x02:
                             self.on_off_attributes['OnOff'] = not self.on_off_attributes['OnOff']
-                        # after acting on a cluster specific command send a 'report attributes' '0x0a' message
-                        self.msg['payload'] = bytearray(
-                            '\x18{:c}\x0a'  # header, sequence number, command identifier
-                            '\x00\x00\x10{:c}'.format(self.data[1], self.on_off_attributes[
-                                'OnOff']))  # attribute identifier (2 bytes), data type (1 byte), value (1 byte)
+                            self.msg['payload'].extend('\x02\x00')  # command identifier (1 byte), status (1 byte)
                         self.send()
                         self.valve.demand()
                 # 'analogue output' cluster
@@ -396,8 +410,7 @@ class TRV:
                             # just responds with success, even though I haven't set up any reporting mechanism!
                             self.msg['payload'] = bytearray(
                                 '\x18{:c}\x07'  # header, sequence number, command identifier
-                                '\x00'.format(self.data[
-                                                  1]))  # only sending a single ZCL payload byte (0x00) to indicate that all attributes were successfully configured
+                                '\x00'.format(self.data[1]))  # only sending a single ZCL payload byte (0x00) to indicate that all attributes were successfully configured
                             self.send()
                         else:
                             print('general command : %04x not supported' % self.data[2])

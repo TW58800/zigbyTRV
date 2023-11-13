@@ -44,8 +44,8 @@ class Motor:
 class Sensor:
     ADC = ADC('D3')  # create an analog pin on D3
     period = 0
-    peek_period = 200
-    period_filtered = 0
+    peek_period = 500
+    period_filtered = 70
     last_reading = 0
     rev_counter = 0
     THRESHOLD = 1500
@@ -93,7 +93,7 @@ class Sensor:
 class Valve:
     motor = Motor()
     valve_sensor = Sensor(motor)
-    STALL_TIME = 100  # milliseconds
+    STALL_TIME = 200  # milliseconds
     closed_position = 0
     position = 0
     travelling = False
@@ -108,6 +108,7 @@ class Valve:
             return
         else:
             self.stop_valve()
+            self.valve_sensor.reset()
             time.sleep_ms(1000)
             self.motor.forwards()
             return -1
@@ -117,22 +118,23 @@ class Valve:
             return
         else:
             self.stop_valve()
+            self.valve_sensor.reset()
             time.sleep_ms(1000)
             self.motor.reverse()
             return 1
 
     def stop_valve(self):
         self.motor.stop_hard()
-        self.valve_sensor.reset()
+        #self.valve_sensor.reset()
         return 0
 
     def demand(self):  # report attribute turned off for now
         if self.trv.on_off_attributes['OnOff']:
-            print('open command')
+            print('\nopen command')
             self.position = 0
             self.goto_revs()
         else:
-            print('close command')
+            print('\nclose command')
             self.position = self.closed_position
             self.goto_revs()
 
@@ -151,10 +153,10 @@ class Valve:
             self.closed_position = self.valve_sensor.rev_counter - 100
             self.valve_sensor.rev_counter -= 50
             self.trv.on_off_attributes['OnOff'] = False
-            print('closed position: %s' % self.closed_position)
-            print('rev counter: %s' % self.valve_sensor.rev_counter)
+            print('closed position: %s (rev counter: %s)' % (self.closed_position, self.valve_sensor.rev_counter))
             self.position = self.closed_position
             self.homing_complete = True
+            time.sleep(10)  # to allow time to process coordinator messages
             self.goto_revs()
             # print('rev counter: %s\n' % self.valve_sensor.rev_counter)
         else:
@@ -167,16 +169,19 @@ class Valve:
             self.valve_sensor.read()
             if (time.ticks_diff(time.ticks_ms(), timer) > 3000) and (self.valve_sensor.rev_counter == 0):
                 print('motor fault')
-                self.trv.send_broadcast_digi_data('motor fault')
+                #self.trv.send_broadcast_digi_data('motor fault')
                 break
             # self.trv.process_msg()  # do not interupt homing
-        self.trv.report_attribute(0x000d, 0x02)
         self.stop_valve()
+        self.trv.report_attribute(0x000d, 0x02)
+        self.valve_sensor.reset()
         self.interupt = False
+        self.valve_sensor.peek_period = self.valve_sensor.period_filtered // 1
+        print('peek period: %s' % self.valve_sensor.peek_period)
 
     def goto_revs(self):
         if not self.trv.connected_to_HA:
-            print('not yet synronised with HA')
+            print('not yet synchronised with HA')
             return
         if not self.homing_complete:
             print('still need to home')
@@ -187,8 +192,11 @@ class Valve:
             print('valve already at desired position')
         else:
             self.travelling = True
-            print('travelling')
-            while (self.valve_sensor.rev_counter is not self.position) & (self.valve_sensor.period < self.STALL_TIME):
+            print('travelling (rev counter: %s)' % self.valve_sensor.rev_counter)
+            while ((self.valve_sensor.rev_counter is not self.position) & (self.valve_sensor.period < (3*self.valve_sensor.peek_period))) or self.trv.processing_message: #(self.valve_sensor.period < self.STALL_TIME):
+                if self.trv.processing_message:
+                    self.trv.processing_message = False
+                    self.valve_sensor.reset()
                 if self.valve_sensor.rev_counter > self.position:
                     self.open_valve()
                 else:
@@ -196,12 +204,18 @@ class Valve:
                 self.valve_sensor.read()
                 self.trv.process_msg()
             self.stop_valve()
-            if self.valve_sensor.period > self.STALL_TIME:
-                print('valve stalling, period (ms): %i' % self.valve_sensor.period)
+            if self.valve_sensor.period > (3*self.valve_sensor.peek_period):
+                print('\nvalve stalling, period (ms): %i' % self.valve_sensor.period)
             else:
-                print('valve reached desired position')
-            print('rev counter: %s\n' % self.valve_sensor.rev_counter)
+                print('\nvalve reached desired position')
+            print('rev counter: %s' % self.valve_sensor.rev_counter)
+            print('period: %s' % self.valve_sensor.period)
+            print('peek period: %s' % self.valve_sensor.peek_period)
+            print('filtered period: %s' % self.valve_sensor.period_filtered)
             self.trv.report_attribute(0x000d, 0x55)
+            self.trv.report_attribute(0x000d, 0x02)
+            self.valve_sensor.reset()
+            self.valve_sensor.peek_period = self.valve_sensor.period_filtered // 1
         self.travelling = False
 
     def set_revs(self, rev_no):
